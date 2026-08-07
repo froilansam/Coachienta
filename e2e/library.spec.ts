@@ -27,15 +27,18 @@ interface Made {
 }
 
 /** A food plus, optionally, log entries pointing at it. */
-async function makeFood(name: string, opts: { entries?: number; timesLogged?: number } = {}) {
+async function makeFood(
+  name: string,
+  opts: { entries?: number; timesLogged?: number; source?: 'library' | 'usda' } = {},
+) {
   return withDb(async (c) => {
     const f = await c.query<Made>(
       `insert into foods (name, name_norm, basis_unit, basis_amount, kcal, protein_g, carbs_g, fat_g,
                           confidence, source, times_logged, citations)
-       values ($1, food_name_norm($1), 'g', 100, 200, 10, 20, 8, 'medium', 'library', $2,
+       values ($1, food_name_norm($1), 'g', 100, 200, 10, 20, 8, 'medium', $3, $2,
                '[{"ref":"test fixture","url":null,"detail":null}]'::jsonb)
        returning id, name`,
-      [name, opts.timesLogged ?? opts.entries ?? 0],
+      [name, opts.timesLogged ?? opts.entries ?? 0, opts.source ?? 'library'],
     )
     const id = f.rows[0]!.id
     for (let i = 0; i < (opts.entries ?? 0); i++) {
@@ -222,23 +225,51 @@ test('AC-1.26 — a cross-basis merge is refused, not converted', async ({ page 
 // ---------------------------------------------------------------------------
 // AC-1.24 / AC-1.28 — pruning and the usage counter
 // ---------------------------------------------------------------------------
-test('AC-1.24 — pruning removes only foods nothing references', async () => {
+test('AC-1.24 — pruning removes only unreferenced foods the app wrote itself', async () => {
   const keep = await makeFood(`${PREFIX} Kept`, { entries: 1 })
-  const drop = await makeFood(`${PREFIX} Dropped`)
+  // A lookup leftover: written by the app while resolving a search, never eaten.
+  const drop = await makeFood(`${PREFIX} Dropped`, { source: 'usda' })
+  /**
+   * Curated and never eaten — the case that matters most. Prune used to delete by
+   * "has this been eaten?" alone, so clearing the food log made the entire imported
+   * library qualify at once and a single CLEAR took 223 of 239 foods.
+   */
+  const curated = await makeFood(`${PREFIX} Curated`, { source: 'library' })
   // A stale counter must not protect a row, and must not condemn one either.
   await withDb((c) =>
     c.query(`update foods set times_logged = 0 where id = $1`, [keep.id]),
   )
 
-  const deleted = await withDb(async (c) => {
-    const r = await c.query<{ prune_unlogged_foods: number }>(`select prune_unlogged_foods()`)
-    return r.rows[0]!.prune_unlogged_foods
-  })
+  /**
+   * Inside a transaction that is ALWAYS rolled back.
+   *
+   * `prune_unlogged_foods()` is global — it deletes every qualifying row, not just this
+   * test's fixtures. Run for real it once took 223 of 239 foods, because the food log
+   * had been cleared and "never eaten" then described the entire library. The RPC is now
+   * scoped to lookup-created sources, but a test that permanently deletes rows it did
+   * not create is the wrong shape regardless of how well the function behaves.
+   *
+   * `withDb` shares one connection per worker, so the assertions below see the
+   * uncommitted state and the real function is still exercised end to end.
+   */
+  await withDb(async (c) => {
+    await c.query('begin')
+    try {
+      const r = await c.query<{ prune_unlogged_foods: number }>(`select prune_unlogged_foods()`)
+      expect(r.rows[0]!.prune_unlogged_foods).toBeGreaterThanOrEqual(1)
 
-  expect(deleted).toBeGreaterThanOrEqual(1)
-  expect(await readFood(drop.id)).toBeNull()
-  // Referenced despite times_logged = 0.
-  expect(await readFood(keep.id)).not.toBeNull()
+      const dropped = await c.query(`select 1 from foods where id = $1`, [drop.id])
+      expect(dropped.rowCount).toBe(0)
+      // Referenced despite times_logged = 0.
+      const kept = await c.query(`select 1 from foods where id = $1`, [keep.id])
+      expect(kept.rowCount).toBe(1)
+      // Curated, unreferenced, and still here. This is the regression guard.
+      const survived = await c.query(`select 1 from foods where id = $1`, [curated.id])
+      expect(survived.rowCount).toBe(1)
+    } finally {
+      await c.query('rollback')
+    }
+  })
 })
 
 test('AC-1.28 — deleting a log entry undoes its usage bump', async () => {
