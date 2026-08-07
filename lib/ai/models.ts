@@ -45,21 +45,34 @@ export type AiJob = keyof typeof MODELS
 export type Provider = (typeof MODELS)[AiJob]['provider']
 
 /**
- * Free-tier daily REQUEST caps, where the provider limits calls rather than tokens.
+ * What each model is allowed per period, in the unit the provider actually meters.
  *
- * Google's is the one that surprises: 20 requests per day per model
- * (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`), shared across every Google job
- * — vision, label reading, and the coach fallback all draw on the same 20.
+ * **One table, deliberately.** This replaced a `DAILY_TOKEN_CAP` and a
+ * `DAILY_REQUEST_CAP` sitting side by side, of which `route()` consulted only the
+ * first — so every request-capped model was invisible to the quota router and
+ * `vision` could never degrade at all. Two parallel tables and a check that knows
+ * about one is the shape of that bug; a second `if` would have reproduced it the next
+ * time a cap kind appeared.
+ *
+ * A model absent from this table is uncapped as far as we know, and the router leaves
+ * it alone rather than guessing a limit.
  */
-export const DAILY_REQUEST_CAP: Record<string, number> = {
-  'gemini-3.6-flash': 20,
+export interface Cap {
+  /** The unit the provider counts. Reporting the wrong one is worse than reporting
+   *  nothing: 3 of 20 requests looks comfortable, 3 of 20 *tokens* looks broken. */
+  kind: 'tokens' | 'requests'
+  period: 'day' | 'month'
+  limit: number
 }
 
-/** Free-tier daily token caps. The 70B's 100k/day is the binding constraint. */
-export const DAILY_TOKEN_CAP: Record<string, number> = {
-  'llama-3.3-70b-versatile': 100_000,
-  'llama-3.1-8b-instant': 500_000,
-  'qwen/qwen3.6-27b': 200_000,
+export const CAPS: Record<string, Cap> = {
+  // Verified 2026-08-07 by probe: `GenerateRequestsPerDayPerProjectPerModel-FreeTier`
+  // — per MODEL, not per account, which is why splitting jobs across models works.
+  'gemini-3.6-flash': { kind: 'requests', period: 'day', limit: 20 },
+
+  'llama-3.3-70b-versatile': { kind: 'tokens', period: 'day', limit: 100_000 },
+  'llama-3.1-8b-instant': { kind: 'tokens', period: 'day', limit: 500_000 },
+  'qwen/qwen3.6-27b': { kind: 'tokens', period: 'day', limit: 200_000 },
 }
 
 /**

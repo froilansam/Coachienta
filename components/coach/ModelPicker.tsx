@@ -8,7 +8,7 @@ import {
   quotaState,
   type ModelChoice,
   type ModelOption,
-} from '@/lib/domain/coach/models'
+} from '@/lib/domain/ai/models'
 
 /**
  * Choosing which model answers — which is really choosing **which quota to spend**
