@@ -1,0 +1,151 @@
+import { describe, expect, it } from 'vitest'
+import { describeKinds, detectPr, type PriorSet } from './detectPr'
+
+const s = (o: Partial<PriorSet> = {}): PriorSet => ({
+  performed_on: '2026-06-01', weight_kg: 10, reps: 10, duration_sec: null, ...o,
+})
+
+/**
+ * The spreadsheet flagged 335 PRs across ~41 sessions on a free-text column holding
+ * 15 values including the number 80. Every set was a record, so the word meant
+ * nothing. These tests are mostly about the cases that must be FALSE.
+ */
+describe('first time is a baseline, not a PR (AC-2.5)', () => {
+  it('reports first_time without claiming a record', () => {
+    const v = detectPr({ weight_kg: 50, reps: 10, duration_sec: null }, [], 'external_weight')
+    expect(v.isPr).toBe(false)
+    expect(v.kinds).toEqual(['first_time'])
+    expect(v.basis).toBe('first time at this gym')
+  })
+
+  it('applies to a gym switch too — history is passed in already gym-scoped', () => {
+    // The caller filters by gym; an empty list IS the new-gym case.
+    expect(detectPr({ weight_kg: 200, reps: 20, duration_sec: null }, [], 'bodyweight').isPr).toBe(false)
+  })
+})
+
+describe('external_weight', () => {
+  const history = [s({ weight_kg: 10, reps: 12 }), s({ weight_kg: 12.5, reps: 8, performed_on: '2026-06-08' })]
+
+  it('a heavier top set is a weight PR', () => {
+    const v = detectPr({ weight_kg: 15, reps: 5, duration_sec: null }, history, 'external_weight')
+    expect(v.isPr).toBe(true)
+    expect(v.kinds).toContain('weight')
+    expect(v.basis).toContain('15 kg × 5 beats 12.5 kg × 8 from 2026-06-08')
+  })
+
+  it('more reps at a weight already used is a reps PR', () => {
+    const v = detectPr({ weight_kg: 10, reps: 13, duration_sec: null }, history, 'external_weight')
+    expect(v.isPr).toBe(true)
+    expect(v.kinds).toContain('reps_at_weight')
+  })
+
+  it('is NOT a PR when it matches the previous best exactly', () => {
+    expect(detectPr({ weight_kg: 12.5, reps: 8, duration_sec: null }, history, 'external_weight').isPr).toBe(false)
+  })
+
+  it('is NOT a PR for a lighter set with fewer reps', () => {
+    const v = detectPr({ weight_kg: 10, reps: 10, duration_sec: null }, history, 'external_weight')
+    expect(v.isPr).toBe(false)
+    // It still reports what it was measured against.
+    expect(v.previousBest?.weight_kg).toBe(12.5)
+  })
+
+  it('catches a rep jump at an unused weight via set volume', () => {
+    /**
+     * 11 kg has never been used, so the reps-at-weight rule cannot fire — but
+     * 11 × 15 = 165 beats every prior set's 120. Without this the set would go
+     * unrecognised.
+     */
+    const v = detectPr({ weight_kg: 11, reps: 15, duration_sec: null }, history, 'external_weight')
+    expect(v.kinds).toContain('volume_set')
+    expect(v.isPr).toBe(true)
+  })
+
+  it('can report more than one kind at once', () => {
+    const v = detectPr({ weight_kg: 20, reps: 20, duration_sec: null }, history, 'external_weight')
+    expect(v.kinds).toEqual(expect.arrayContaining(['weight', 'volume_set']))
+  })
+
+  it('is not a PR when the set is incomplete', () => {
+    expect(detectPr({ weight_kg: null, reps: 10, duration_sec: null }, history, 'external_weight').isPr).toBe(false)
+  })
+})
+
+describe('assisted — lower assist is better', () => {
+  const history = [s({ weight_kg: 30, reps: 8 }), s({ weight_kg: 25, reps: 6, performed_on: '2026-06-08' })]
+
+  it('less assist at equal-or-more reps is a PR', () => {
+    /**
+     * The inversion that makes `volume_kg` null for this load type. A naive maximum
+     * would call the HEAVIEST assist a record, which is precisely backwards.
+     */
+    const v = detectPr({ weight_kg: 20, reps: 6, duration_sec: null }, history, 'assisted')
+    expect(v.isPr).toBe(true)
+    expect(v.kinds).toContain('weight')
+  })
+
+  it('more reps at the same assist is a PR', () => {
+    const v = detectPr({ weight_kg: 25, reps: 8, duration_sec: null }, history, 'assisted')
+    expect(v.isPr).toBe(true)
+    expect(v.kinds).toContain('reps_at_weight')
+  })
+
+  it('MORE assist is never a PR, however many reps', () => {
+    expect(detectPr({ weight_kg: 40, reps: 20, duration_sec: null }, history, 'assisted').isPr).toBe(false)
+  })
+
+  it('less assist but fewer reps is not claimed', () => {
+    expect(detectPr({ weight_kg: 20, reps: 3, duration_sec: null }, history, 'assisted').isPr).toBe(false)
+  })
+})
+
+describe('bodyweight', () => {
+  const unweighted = [s({ weight_kg: 0, reps: 8 }), s({ weight_kg: 0, reps: 10, performed_on: '2026-06-08' })]
+
+  it('more reps than the previous max is a PR', () => {
+    const v = detectPr({ weight_kg: 0, reps: 11, duration_sec: null }, unweighted, 'bodyweight')
+    expect(v.isPr).toBe(true)
+    expect(v.basis).toContain('11 reps beats 10 from 2026-06-08')
+  })
+
+  it('equalling the max is not a PR', () => {
+    expect(detectPr({ weight_kg: 0, reps: 10, duration_sec: null }, unweighted, 'bodyweight').isPr).toBe(false)
+  })
+
+  it('adding weight is judged as a weighted set', () => {
+    // Once there is external load, reps alone stop being the axis.
+    const v = detectPr({ weight_kg: 10, reps: 5, duration_sec: null }, unweighted, 'bodyweight')
+    expect(v.isPr).toBe(true)
+    expect(v.kinds).toContain('weight')
+  })
+})
+
+describe('duration', () => {
+  const history = [s({ weight_kg: null, reps: null, duration_sec: 45 }), s({ weight_kg: null, reps: null, duration_sec: 60, performed_on: '2026-06-08' })]
+
+  it('a longer hold is a PR', () => {
+    const v = detectPr({ weight_kg: null, reps: null, duration_sec: 75 }, history, 'duration')
+    expect(v.isPr).toBe(true)
+    expect(v.kinds).toEqual(['duration'])
+    expect(v.basis).toBe('75 s beats 60 s from 2026-06-08')
+  })
+
+  it('an equal hold is not', () => {
+    expect(detectPr({ weight_kg: null, reps: null, duration_sec: 60 }, history, 'duration').isPr).toBe(false)
+  })
+
+  it('never claims a weight PR for a plank', () => {
+    const v = detectPr({ weight_kg: null, reps: null, duration_sec: 90 }, history, 'duration')
+    expect(v.kinds).not.toContain('weight')
+    expect(v.kinds).not.toContain('volume_set')
+  })
+})
+
+describe('describeKinds', () => {
+  it('reads as English, not as enum values', () => {
+    expect(describeKinds(['weight', 'reps_at_weight'])).toBe('New weight · More reps')
+    expect(describeKinds(['first_time'])).toBe('First time')
+    expect(describeKinds(['duration'])).toBe('Longest hold')
+  })
+})
