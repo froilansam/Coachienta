@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server'
-import { DAILY_REQUEST_CAP, DAILY_TOKEN_CAP, MODELS, QUOTA_TZ } from '@/lib/ai/models'
+import { CAPS, MODELS, QUOTA_TZ } from '@/lib/ai/models'
 import { db } from '@/lib/db/client'
 import {
   LABEL,
   MODEL_CHOICES,
   type ModelOption,
   type Quota,
-} from '@/lib/domain/coach/models'
+} from '@/lib/domain/ai/models'
 
 /**
  * Which models the coach can use, and how much of each one's day is spent (US-3.7).
@@ -40,21 +40,19 @@ export async function GET() {
       (r) => r.model === id && r.provider === provider && r.usage_date === usageDate(provider),
     )
 
-    const tokenCap = DAILY_TOKEN_CAP[id]
-    const requestCap = DAILY_REQUEST_CAP[id]
-
     /**
-     * Tokens where the provider limits tokens, requests where it limits calls. Reporting
-     * the wrong unit would be worse than reporting nothing: 3 of 20 requests looks
-     * comfortable, and 3 of 20 *tokens* looks broken.
+     * One lookup, one unit — `CAPS` already knows which one this model is metered in.
+     * The branch this replaced could report the wrong unit, and 3 of 20 requests looks
+     * comfortable where 3 of 20 *tokens* looks broken.
      */
+    const cap = CAPS[id]
     const quota: Quota =
-      requestCap !== undefined
-        ? { kind: 'requests', used: Number(today?.requests ?? 0), cap: requestCap }
+      cap?.kind === 'requests'
+        ? { kind: 'requests', used: Number(today?.requests ?? 0), cap: cap.limit }
         : {
             kind: 'tokens',
             used: Number(today?.input_tokens ?? 0) + Number(today?.output_tokens ?? 0),
-            cap: tokenCap ?? 0,
+            cap: cap?.limit ?? 0,
           }
 
     return { choice, id, quota, ...LABEL[choice] }

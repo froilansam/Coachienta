@@ -1,7 +1,8 @@
 import 'server-only'
 import { db } from '@/lib/db/client'
 import { env } from '@/lib/env'
-import { DAILY_TOKEN_CAP, MODELS, QUOTA_TZ, type AiJob, type Provider } from './models'
+import { CAPS, MODELS, QUOTA_TZ, type AiJob, type Provider } from './models'
+import { chooseRoute, type Usage } from '@/lib/domain/ai/models'
 import { model } from './providers'
 
 export interface Route {
@@ -27,39 +28,78 @@ const FALLBACK: Partial<Record<AiJob, AiJob>> = {
   plan: 'planFallback',
 }
 
-async function tokensUsedToday(provider: Provider, id: string): Promise<number> {
+/**
+ * Everything spent today, by model, in one query.
+ *
+ * One round trip regardless of how deep the fallback chain goes — the previous version
+ * queried per hop, which also meant it only ever looked at one.
+ */
+async function usageToday(provider: Provider, ids: readonly string[]): Promise<Record<string, Usage>> {
   const { data } = await db
     .from('ai_usage_daily')
-    .select('input_tokens, output_tokens')
+    .select('model, requests, input_tokens, output_tokens')
     .eq('usage_date', usageDate(provider))
-    .eq('provider', provider)
-    .eq('model', id)
-    .maybeSingle()
+    .in('model', [...ids])
 
-  return (data?.input_tokens ?? 0) + (data?.output_tokens ?? 0)
+  const usage: Record<string, Usage> = {}
+  for (const row of data ?? []) {
+    usage[String(row.model)] = {
+      tokens: Number(row.input_tokens ?? 0) + Number(row.output_tokens ?? 0),
+      requests: Number(row.requests ?? 0),
+    }
+  }
+  return usage
+}
+
+/** The models a job may land on, primary first. */
+function chainFor(job: AiJob): AiJob[] {
+  const chain: AiJob[] = [job]
+  for (let next = FALLBACK[job]; next && !chain.includes(next); next = FALLBACK[next]) {
+    chain.push(next)
+  }
+  return chain
 }
 
 /**
  * Pick a model for a job, degrading before the free tier hard-stops us.
  *
- * Never throws on exhaustion — the caller decides how to degrade. Logging food
- * must never be blocked by AI (PRD-000 Principle 1).
+ * Never throws on exhaustion — the caller decides how to degrade. Logging food must
+ * never be blocked by AI (PRD-000 Principle 1).
+ *
+ * The decision itself is `chooseRoute`, which is pure and tested. This function only
+ * gathers what it needs: which models are in play, and what they have spent.
  */
 export async function route(job: AiJob): Promise<Route> {
-  const primary = MODELS[job]
-  const cap = DAILY_TOKEN_CAP[primary.id]
+  const chain = chainFor(job)
+  // `string[]`, not the literal union `MODELS` infers — `chooseRoute` is generic over
+  // ids by design so it can be tested without the registry.
+  const ids: string[] = chain.map((j) => MODELS[j].id)
 
-  if (cap) {
-    const used = await tokensUsedToday(primary.provider, primary.id)
-    if (used >= cap * env.AI_QUOTA_SAFETY_MARGIN) {
-      const alt = FALLBACK[job]
-      if (alt) {
-        return { provider: MODELS[alt].provider, id: MODELS[alt].id, degraded: true, reason: 'quota' }
-      }
-    }
+  /**
+   * Usage is bucketed in the PROVIDER's timezone, so a chain that crosses providers
+   * cannot share one query. In practice every chain here is one provider deep or two;
+   * the group-by keeps it correct either way.
+   */
+  const byProvider = new Map<Provider, string[]>()
+  for (const j of chain) {
+    const { provider, id } = MODELS[j]
+    byProvider.set(provider, [...(byProvider.get(provider) ?? []), id])
   }
+  const usages = await Promise.all(
+    [...byProvider].map(([provider, models]) => usageToday(provider, models)),
+  )
+  const usage: Record<string, Usage> = {}
+  for (const part of usages) Object.assign(usage, part)
 
-  return { provider: primary.provider, id: primary.id, degraded: false }
+  const decision = chooseRoute(ids, usage, CAPS, env.AI_QUOTA_SAFETY_MARGIN)
+  const landed = chain[ids.indexOf(decision.id)] ?? job
+
+  return {
+    provider: MODELS[landed].provider,
+    id: MODELS[landed].id,
+    degraded: decision.degraded,
+    ...(decision.reason ? { reason: decision.reason } : {}),
+  }
 }
 
 /** Resolve a route to a callable model handle. */

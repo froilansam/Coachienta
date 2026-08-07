@@ -1,5 +1,12 @@
 /**
- * Which model answers, and how much of its day is left (US-3.7).
+ * Which model answers, how much of its allowance is left, and when to degrade off it.
+ *
+ * Pure, and that is the point of the file. The degrade decision used to live inside a
+ * `server-only` async function with no test, which is how it went unnoticed that it
+ * consulted one of two cap tables and therefore could never degrade a request-capped
+ * model. Decisions that can be wrong belong somewhere they can be asserted.
+ *
+ * (US-3.7)
  *
  * Switching model is not a preference here — it is a **quota** decision. The three
  * options draw on three unrelated pools, so when one is spent the others are untouched:
@@ -66,4 +73,66 @@ export function quotaState(q: Quota): 'ok' | 'low' | 'spent' {
 /** The option to fall back to when the chosen one is spent, or null if none is left. */
 export function firstUsable(options: readonly ModelOption[]): ModelOption | null {
   return options.find((o) => quotaState(o.quota) !== 'spent') ?? null
+}
+
+// ---------------------------------------------------------------------------
+// Choosing a model — the decision the router used to make untested
+// ---------------------------------------------------------------------------
+/** What a model has spent, in whichever unit its provider meters. */
+export interface Usage {
+  tokens: number
+  requests: number
+}
+
+export interface CapLike {
+  kind: 'tokens' | 'requests'
+  period: 'day' | 'month'
+  limit: number
+}
+
+export interface RouteDecision {
+  id: string
+  degraded: boolean
+  reason?: 'quota'
+  /** Every model tried and rejected, so a failure can say what it walked past. */
+  exhausted: string[]
+}
+
+/**
+ * Walks a fallback chain and returns the first model with allowance left.
+ *
+ * **Walks the whole chain, not one hop.** With more than one pool per task it is
+ * genuinely possible for a model and its fallback to both be spent, and the previous
+ * one-hop version would hand back an equally-dead model flagged `degraded: true` —
+ * a wrong answer that looks like a handled one.
+ *
+ * A model with no cap entry is treated as having room. Guessing a limit for something
+ * we have not measured would be inventing a number, and the whole quota surface exists
+ * because invented numbers are what went wrong before.
+ */
+export function chooseRoute(
+  chain: readonly string[],
+  usage: Readonly<Record<string, Usage>>,
+  caps: Readonly<Record<string, CapLike>>,
+  margin: number,
+): RouteDecision {
+  const exhausted: string[] = []
+
+  for (const [i, id] of chain.entries()) {
+    const cap = caps[id]
+    const spent = usage[id] ?? { tokens: 0, requests: 0 }
+    const used = cap?.kind === 'requests' ? spent.requests : spent.tokens
+
+    if (cap === undefined || used < cap.limit * margin) {
+      return { id, degraded: i > 0, ...(i > 0 ? { reason: 'quota' as const } : {}), exhausted }
+    }
+    exhausted.push(id)
+  }
+
+  /**
+   * Everything is spent. Return the FIRST model rather than nothing: the caller's job
+   * is to attempt and degrade gracefully, and a real 429 carrying the provider's own
+   * reset time is more useful to the user than our refusal to try.
+   */
+  return { id: chain[0] ?? '', degraded: true, reason: 'quota', exhausted }
 }
