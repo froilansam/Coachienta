@@ -28,6 +28,8 @@ export interface FoodEdit {
 }
 
 export interface LibraryView {
+  /** Re-reads the list. Needed so a newly created food appears without a reload. */
+  refresh: () => void
   query: string
   setQuery: (v: string) => void
   filter: LibraryFilter
@@ -289,6 +291,7 @@ export function useLibrary(): LibraryView {
   )
 
   return {
+    refresh,
     query,
     setQuery,
     filter,

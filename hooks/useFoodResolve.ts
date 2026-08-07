@@ -1,5 +1,6 @@
 'use client'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { parseQuantity } from '@/lib/domain/food/parseQuantity'
 import { ResolveResponse } from '@/lib/schemas/food'
 import type { FoodRow } from '@/lib/schemas/food'
 
@@ -24,6 +25,7 @@ interface Resolution {
   results: FoodRow[]
   stage: ResolveResponse['stage']
   parsedAmount: number | null
+  parsedQuery: string
   segments: string[] | null
   notice: string | null
   rejected: string | null
@@ -35,6 +37,7 @@ const NOTHING: Resolution = {
   results: [],
   stage: 'none',
   parsedAmount: null,
+  parsedQuery: '',
   segments: null,
   notice: null,
   rejected: null,
@@ -49,6 +52,13 @@ export interface FoodResolveState {
   stage: ResolveResponse['stage']
   /** Amount parsed out of the query, e.g. 200 from "200g rice". */
   parsedAmount: number | null
+  /**
+   * The food name with any quantity stripped — "white rice" from "200g white rice".
+   *
+   * Needed so "add what I typed" offers the food, not the portion. Falls back to the
+   * raw query before a response arrives.
+   */
+  parsedQuery: string
   /** Several foods in one input; the caller resolves each (AC-1.10). */
   segments: string[] | null
   isSearching: boolean
@@ -115,6 +125,7 @@ export function useFoodResolve(): FoodResolveState {
         results: d.results,
         stage: d.stage,
         parsedAmount: d.parsed.amount,
+        parsedQuery: d.parsed.query,
         segments: d.segments ?? null,
         notice: d.notice ?? null,
         rejected: d.rejected ?? null,
@@ -180,6 +191,12 @@ export function useFoodResolve(): FoodResolveState {
     failed: res.failed,
     retry,
     parsedAmount: res.parsedAmount,
+    /**
+     * Derived locally, not read back from the response. `parseQuantity` is pure and
+     * cheap, and waiting for a response left the raw text in place — so the create row
+     * offered `Add "200g tofu"` instead of `Add "tofu"`.
+     */
+    parsedQuery: parseQuantity(query).query,
     segments: res.segments,
     isSearching,
     notice: res.notice,
