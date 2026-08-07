@@ -1,0 +1,76 @@
+# ─────────────────────────────────────────────────────────────
+# SECRETS — nothing matching these may ever reach a commit.
+# See PRD-008 §8. If a secret lands in history, ROTATE it —
+# deleting the line does not remove it from git.
+# ─────────────────────────────────────────────────────────────
+.env
+.env.*
+env
+env.*
+*.env
+!.env.example
+
+# credentials / keys of any shape
+*.pem
+*.key
+*.p8
+*.p12
+*.mobileprovision
+**/service-account*.json
+**/*credentials*.json
+secrets/
+
+# ─────────────────────────────────────────────────────────────
+# Node / Next.js
+# ─────────────────────────────────────────────────────────────
+node_modules/
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+next-env.d.ts
+
+# Serwist / service worker build output (PRD-001 §4.3)
+public/sw.js
+public/sw.js.map
+public/swe-worker*.js
+public/workbox-*.js
+
+# ─────────────────────────────────────────────────────────────
+# Tooling
+# ─────────────────────────────────────────────────────────────
+.vercel
+.turbo
+coverage/
+playwright-report/
+test-results/
+.eslintcache
+
+# Supabase CLI local state
+supabase/.branches/
+supabase/.temp/
+
+# ─────────────────────────────────────────────────────────────
+# OS / editor
+# ─────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# ─────────────────────────────────────────────────────────────
+# Per-machine tool state — not project config
+# ─────────────────────────────────────────────────────────────
+.claude/settings.local.json
+
+# ─────────────────────────────────────────────────────────────
+# Local scratch
+# ─────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+scratch/
+tmp/
