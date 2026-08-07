@@ -27,8 +27,31 @@ const schema = z.object({
 const parsed = schema.safeParse(process.env)
 
 if (!parsed.success) {
-  const missing = parsed.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`)
-  throw new Error(`Invalid environment:\n${missing.join('\n')}`)
+  /**
+   * Says whether the variable is ABSENT or merely wrong, because those have different
+   * fixes and Zod reports both as "Invalid input".
+   *
+   * A Vercel build failed with `SUPABASE_URL: Invalid input`, which reads as "the value
+   * is malformed" when the variable had simply never been added to that environment.
+   * The distinction is one line here and saves a deploy cycle to discover.
+   *
+   * The value itself is never echoed — build logs are not a safe place for a key, and
+   * `startsWith` failures would otherwise print most of one.
+   */
+  const detail = parsed.error.issues.map((issue) => {
+    const name = String(issue.path[0])
+    const supplied = process.env[name]
+    return supplied === undefined || supplied === ''
+      ? `  ${name}: not set in this environment`
+      : `  ${name}: set, but rejected — ${issue.message}`
+  })
+
+  throw new Error(
+    `Invalid environment:\n${detail.join('\n')}\n\n` +
+      'Every variable in .env.example is required. On Vercel they must be added for the ' +
+      'environment being built (Production, Preview and Development are separate lists), ' +
+      'and a deploy triggered BEFORE they were added will still fail — redeploy after.',
+  )
 }
 
 export const env = parsed.data
