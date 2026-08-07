@@ -5,10 +5,13 @@
 # ─────────────────────────────────────────────────────────────
 .env
 .env.*
-env
-env.*
 *.env
 !.env.example
+# `/env/` anchored to a DIRECTORY at the root. The previous rules here were `env` and
+# `env.*`, which matched **`lib/env.ts`** — the config validator — and silently kept it
+# out of the repo. The Vercel build failed with `Can't resolve '@/lib/env'` while every
+# local build passed, because locally the file was simply there.
+/env/
 
 # credentials / keys of any shape
 *.pem
