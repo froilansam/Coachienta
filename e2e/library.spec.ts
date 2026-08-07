@@ -285,3 +285,84 @@ test('AC-1.28 — deleting a log entry undoes its usage bump', async () => {
   await withDb((c) => c.query(`select unbump_food_usage($1)`, [food.id]))
   expect((await readFood(food.id))!.times_logged).toBe(0)
 })
+
+// ---------------------------------------------------------------------------
+// Creating a food by hand
+// ---------------------------------------------------------------------------
+test('a food can be added from the library, and is searchable straight away', async ({ page }) => {
+  const name = `${PREFIX} Handmade Adobo`
+  await page.goto(`/food/library?k=${TOKEN}`)
+  await page.getByRole('heading', { name: 'Food library' }).waitFor()
+
+  await page.getByRole('button', { name: 'Add a food' }).click()
+  await page.getByLabel('Name').fill(name)
+  await page.getByLabel('Calories').fill('180')
+  await page.getByLabel('Protein in grams').fill('14')
+  await page.getByRole('button', { name: 'SAVE FOOD' }).click()
+
+  /**
+   * Searched for rather than scrolled to. The list is ordered by usage and capped at
+   * 200 rows, so a food with zero logs legitimately sorts last — "searchable straight
+   * away" is the promise the sheet makes, and it is the one worth asserting.
+   */
+  /**
+   * "Searchable straight away" asserted through the search itself rather than by waiting
+   * for the row to appear in the list. The list is ordered by usage and capped at 200
+   * rows, so a food with zero logs sorts last — its position there proves nothing, while
+   * being findable is the promise the sheet actually makes.
+   */
+  await expect
+    .poll(async () => {
+      const res = await page.request.get(`/api/data/library?filter=all&q=${encodeURIComponent(name)}`)
+      const body = (await res.json()) as { foods: Array<{ name: string }> }
+      return body.foods.some((f) => f.name === name)
+    })
+    .toBe(true)
+
+  const saved = await withDb(async (c) => {
+    const r = await c.query<{ source: string; confidence: string; kcal: string; citations: unknown }>(
+      `select source::text, confidence::text, kcal, citations from foods where name = $1`, [name])
+    return r.rows[0]
+  })
+  /**
+   * `manual` + `user_verified` is what `trustOf` renders as VERIFIED — "you checked
+   * these numbers yourself", which is precisely true when you typed them. Both enum
+   * values already existed and had never been used.
+   */
+  expect(saved?.source).toBe('manual')
+  expect(saved?.confidence).toBe('user_verified')
+  expect(Number(saved?.kcal)).toBe(180)
+  // No invented citation: SourceList already says "entered by hand" for an empty array.
+  expect(saved?.citations).toEqual([])
+})
+
+test('adding a name that already exists returns that food instead of overwriting it', async ({
+  page,
+}) => {
+  /**
+   * The hazard this guards: `upsertFood` keys on `(name_norm, brand)`, so reusing it
+   * here would have rewritten an existing food's macros — including a row with 187 logs
+   * behind it — with no version bump and no audit trail.
+   */
+  const existing = await makeFood(`${PREFIX} Already Here`, { source: 'library' })
+  const before = await readFood(existing.id)
+
+  await page.goto(`/food/library?k=${TOKEN}`)
+  await page.getByRole('button', { name: 'Add a food' }).click()
+  await page.getByLabel('Name').fill(`${PREFIX} Already Here`)
+  await page.getByLabel('Calories').fill('9999')
+  await page.getByRole('button', { name: 'SAVE FOOD' }).click()
+
+  await expect(page.getByRole('button', { name: 'SAVE FOOD' })).toHaveCount(0)
+
+  const after = await readFood(existing.id)
+  expect(Number(after!.kcal)).toBe(Number(before!.kcal))
+  expect(after!.version).toBe(before!.version)
+  // And no duplicate row was created.
+  const count = await withDb(async (c) => {
+    const r = await c.query<{ n: string }>(
+      `select count(*)::text n from foods where name = $1`, [`${PREFIX} Already Here`])
+    return Number(r.rows[0]!.n)
+  })
+  expect(count).toBe(1)
+})

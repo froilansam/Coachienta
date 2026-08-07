@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import {
   correctFood,
+  createManualFood,
   deleteFoodIfUnreferenced,
   libraryCounts,
   listLibrary,
@@ -17,9 +18,12 @@ import { MacroRate } from '@/lib/schemas/domain'
  *
  * One route rather than five because they are one screen's worth of behaviour
  * over one table, and splitting them would mean five files repeating the same
- * parse-validate-respond shell. GET reads; PATCH corrects one row; POST carries
- * the destructive actions, which are named in the body so they can never be
- * triggered by a stray GET.
+ * parse-validate-respond shell. GET reads; PATCH corrects one row; **PUT makes one**;
+ * POST carries the destructive actions, which are named in the body so they can never
+ * be triggered by a stray GET.
+ *
+ * Creating is PUT rather than another `action` in the POST union precisely because of
+ * that last sentence — POST here means "something irreversible", and a create is not.
  */
 const Correction = z.object({
   id: z.uuid(),
@@ -32,6 +36,9 @@ const Correction = z.object({
     .transform((b) => (b === '' ? null : b)),
   rate: MacroRate,
 })
+
+/** A correction minus the id: the same fields, none of the history. */
+const NewFood = Correction.omit({ id: true })
 
 const Action = z.discriminatedUnion('action', [
   z.object({ action: z.literal('prune') }),
@@ -93,6 +100,38 @@ export async function POST(req: Request) {
     // show verbatim.
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Merge failed' },
+      { status: 422 },
+    )
+  }
+}
+
+/**
+ * Create a food the user typed in.
+ *
+ * Returns **200 with `existed: false`** for a new row and **200 with `existed: true`**
+ * when the name already exists. A duplicate is not an error here: the user was reaching
+ * for a food and it turned out to be in the library already, so handing back that row is
+ * the useful answer. The alternative — upserting — would silently rewrite the macros of
+ * an existing food, which is the one outcome worth going out of the way to prevent.
+ */
+export interface CreateFoodResponse {
+  food: FoodRow
+  existed: boolean
+}
+
+export async function PUT(req: Request) {
+  const parsed = NewFood.safeParse(await req.json().catch(() => null))
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.issues }, { status: 400 })
+  }
+
+  const { name, brand, rate } = parsed.data
+  try {
+    const created = await createManualFood(name, brand, rate)
+    return NextResponse.json<CreateFoodResponse>(created)
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : 'Could not save that food.' },
       { status: 422 },
     )
   }

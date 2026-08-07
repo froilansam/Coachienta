@@ -1,6 +1,6 @@
 'use client'
-import { Trash2 } from 'lucide-react'
-import { Button } from '@/components/ui/Button'
+import { Plus, Trash2 } from 'lucide-react'
+import { Button, IconButton } from '@/components/ui/Button'
 import { Chip } from '@/components/ui/Chip'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Rule } from '@/components/ui/Rule'
@@ -10,7 +10,9 @@ import { Sheet } from '@/components/ui/Sheet'
 import { SkeletonList } from '@/components/ui/Skeleton'
 import { Text } from '@/components/ui/Text'
 import { useLibrary } from '@/hooks/useLibrary'
+import { useNewFood } from '@/hooks/useNewFood'
 import { canSaveFood, FILTER_BLURB, filterOptions } from '@/lib/domain/food/library'
+import { NewFoodSheet } from '@/components/food/NewFoodSheet'
 import { FoodEditor } from './FoodEditor'
 import { LibraryRow } from './LibraryRow'
 import { MergePicker } from './MergePicker'
@@ -25,13 +27,19 @@ import { MergePicker } from './MergePicker'
  */
 export function LibraryScreen() {
   const vm = useLibrary()
+  const newFood = useNewFood()
   const blurb = FILTER_BLURB[vm.filter]
 
   return (
     <main className="mx-auto flex w-full max-w-lg flex-col gap-4 px-4 pt-6 pb-8">
-      <Text as="h1" variant="title">
-        Food library
-      </Text>
+      <div className="flex items-center justify-between gap-2">
+        <Text as="h1" variant="title">
+          Food library
+        </Text>
+        {/* 44 px, per the rule AGENTS.md records after a 14×30 control shipped on
+            /profile and was effectively unhittable. */}
+        <IconButton icon={Plus} label="Add a food" variant="ghost" onClick={() => newFood.open()} />
+      </div>
 
       <SearchField
         label="Search your library"
@@ -79,6 +87,13 @@ export function LibraryScreen() {
         <EmptyState
           title="NOTHING HERE"
           body={vm.query ? 'No food matches that.' : 'This filter is empty — good news.'}
+          action={
+            vm.query ? (
+              <Button variant="primary" iconStart={Plus} onClick={() => newFood.open(vm.query)}>
+                ADD IT
+              </Button>
+            ) : undefined
+          }
         />
       ) : (
         <div className="flex flex-col">
@@ -153,6 +168,9 @@ export function LibraryScreen() {
           )
         ) : null}
       </Sheet>
+      {/* Refetch on save: a food you just added must be in the list you are looking at,
+          not after a reload. */}
+      <NewFoodSheet vm={newFood} onSaved={vm.refresh} />
     </main>
   )
 }

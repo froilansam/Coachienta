@@ -7,9 +7,12 @@ import { SearchField } from '@/components/ui/SearchField'
 import { SkeletonList } from '@/components/ui/Skeleton'
 import { Text } from '@/components/ui/Text'
 import type { FoodResolveState } from '@/hooks/useFoodResolve'
+import { useNewFood } from '@/hooks/useNewFood'
 import type { PhotoDraft } from '@/hooks/usePhotoDraft'
 import type { FoodRow } from '@/lib/schemas/food'
+import { CreateFoodRow } from './CreateFoodRow'
 import { FoodResultRow } from './FoodResultRow'
+import { NewFoodSheet } from './NewFoodSheet'
 import { PhotoCaptureButton } from './PhotoCaptureButton'
 
 /**
@@ -30,6 +33,21 @@ export function FoodSearchPanel({
   onSelect: (food: FoodRow) => void
 }) {
   const busy = photo.phase === 'preparing' || photo.phase === 'identifying'
+  const newFood = useNewFood()
+
+  /**
+   * Offered only when "add what I typed" means something:
+   *
+   * - not for an empty box — that view is the recent list;
+   * - not when `looksLikeFood` has already said this is not food, since the copy there
+   *   explains why;
+   * - not mid multi-item entry — there you are picking a food per segment, and adding
+   *   the whole typed string as ONE food would be wrong.
+   */
+  const canCreate =
+    search.parsedQuery.trim() !== '' && search.rejected === null && !search.segments
+
+  // Created food flows straight into the basket: the user was mid-log, not mid-admin.
 
   return (
     <div className="flex flex-col gap-3 pb-2">
@@ -94,10 +112,17 @@ export function FoodSearchPanel({
           question — the banner above already explains and offers the retry.
         */
         search.failed ? null : (
-          <EmptyState
-            title="NO MATCH"
-            body="Nothing in your library or the nutrition databases. Try a simpler name."
-          />
+          <>
+            <EmptyState
+              title="NO MATCH"
+              body="Nothing in your library or the nutrition databases. Try a simpler name, or add it yourself."
+            />
+            {/* Shown UNDER the empty state, not instead of it — the explanation and the
+                way out are both useful. */}
+            {canCreate ? (
+              <CreateFoodRow query={search.parsedQuery} onCreate={() => newFood.open(search.parsedQuery)} />
+            ) : null}
+          </>
         )
       ) : (
         <div className="flex flex-col">
@@ -121,8 +146,21 @@ export function FoodSearchPanel({
               onSelect={() => onSelect(f)}
             />
           ))}
+
+          {/* Last row, always. "None of these is what I meant" is as common as
+              "nothing matched". */}
+          {canCreate ? (
+            <CreateFoodRow query={search.parsedQuery} onCreate={() => newFood.open(search.parsedQuery)} />
+          ) : null}
         </div>
       )}
+
+      {/*
+        Straight into the basket via the same handler a search result uses. If the name
+        turned out to already exist, that row is selected instead — which is what the
+        user was reaching for.
+      */}
+      <NewFoodSheet vm={newFood} onSaved={onSelect} />
     </div>
   )
 }
