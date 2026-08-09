@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { closeDb, withDb } from './db'
+import { closeDb, dropUnreferencedPlans, withDb } from './db'
 
 /**
  * AC-2.21 / AC-2.22 / AC-2.23 — session history, deletion, and mid-session editing.
@@ -20,10 +20,7 @@ const cleanup = () =>
       [`${MARK}%`],
     )
     await c.query(`delete from workout_sessions where name like $1`, [`${MARK}%`])
-    await c.query(`delete from plan_exercises where plan_id in
-                    (select id from workout_plans where not is_template)`)
-    await c.query(`delete from workout_plans where not is_template`)
-  })
+  }).then(dropUnreferencedPlans)
 
 test.beforeEach(cleanup)
 test.afterAll(cleanup)
@@ -84,7 +81,7 @@ async function logSet(
   await page.getByLabel(new RegExp(`KG for set 1 of ${exercise}`)).fill(weight)
   await page.getByLabel(new RegExp(`Reps for set 1 of ${exercise}`)).fill(reps)
   await page.getByRole('checkbox', { name: new RegExp(`Save set 1 of ${exercise}`) }).click()
-  await page.getByRole('checkbox', { name: /Set 1 saved/ }).first().waitFor()
+  await page.getByRole('checkbox', { name: new RegExp(`Set 1 of ${exercise} saved`) }).waitFor()
 }
 
 // ---------------------------------------------------------------------------

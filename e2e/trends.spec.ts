@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { closeDb, withDb } from './db'
+import { closeDb, dropUnreferencedPlans, withDb } from './db'
 
 /**
  * P3-4: personal records and the trends screen, against real Postgres.
@@ -21,10 +21,7 @@ const cleanup = () =>
       [`${MARK}%`],
     )
     await c.query(`delete from workout_sessions where name like $1`, [`${MARK}%`])
-    await c.query(`delete from plan_exercises where plan_id in
-                    (select id from workout_plans where not is_template)`)
-    await c.query(`delete from workout_plans where not is_template`)
-  })
+  }).then(dropUnreferencedPlans)
 
 test.beforeEach(cleanup)
 test.afterAll(cleanup)
@@ -71,7 +68,7 @@ async function logSet(
   await page.getByLabel(new RegExp(`KG for set 1 of ${exercise}`)).fill(weight)
   await page.getByLabel(new RegExp(`Reps for set 1 of ${exercise}`)).fill(reps)
   await page.getByRole('checkbox', { name: new RegExp(`Save set 1 of ${exercise}`) }).click()
-  await page.getByRole('checkbox', { name: /Set 1 saved/ }).first().waitFor()
+  await page.getByRole('checkbox', { name: new RegExp(`Set 1 of ${exercise} saved`) }).waitFor()
 }
 
 // ---------------------------------------------------------------------------
@@ -217,17 +214,54 @@ test.describe('trends', () => {
   })
 
   test('a plank carries sets but no kilograms', async ({ page }) => {
+    /**
+     * This asserted that `Abs / core` was absent from the VOLUME legend — a proxy that
+     * held only while the seeded plank was the sole abs work in the window. It is not
+     * any more: a real `Abs Machine (Total Abdominal)` set carries 950 kg, correctly,
+     * because it is `external_weight`. The proxy was wrong, not the app.
+     *
+     * So assert the claim itself. Abs kilograms on screen must equal the kilograms the
+     * weighted sets produce — the plank adds sets to that group and nothing to its
+     * volume. A duration set leaking into volume (43,368 kg of nothing, §AC-2.3) shows
+     * up here as a mismatch no matter what else was trained.
+     */
+    const abs = await withDb(async (c) => {
+      const r = await c.query<{ kg: string; sets: string; planks: string }>(
+        `select coalesce(sum(s.volume_kg), 0) kg, count(*) sets,
+                count(*) filter (where e.name = 'Plank') planks
+           from workout_sets s
+           join workout_sessions w on w.id = s.session_id
+           join gyms g on g.id = w.gym_id and g.is_current
+           join exercises e on e.id = s.exercise_id
+          where e.muscle_group = 'abs_core'
+            and w.performed_on >= current_date - 84`,
+      )
+      const x = r.rows[0]!
+      return { kg: Number(x.kg), sets: Number(x.sets), planks: Number(x.planks) }
+    })
+    // Without this the test could pass on a window that never held a plank at all.
+    expect(abs.planks).toBeGreaterThan(0)
+
+    /** Abs across every weekly bar, read back out of the bars' own accessible names. */
+    const absOnScreen = async () => {
+      const bars = await page.locator('[aria-label*=" — "]').all()
+      let sum = 0
+      for (const bar of bars) {
+        const m = (await bar.getAttribute('aria-label'))!.match(/Abs \/ core ([\d,.]+)/)
+        if (m) sum += Number(m[1]!.replace(/,/g, ''))
+      }
+      return sum
+    }
+
     await page.goto(`/trends?k=${TOKEN}`)
     await page.getByRole('heading', { name: 'Volume by muscle group' }).waitFor()
+    // Per-week rounding to 1 dp, summed across up to 12 weeks.
+    expect(await absOnScreen()).toBeCloseTo(abs.kg, 0)
 
-    // Abs are absent from the volume legend entirely...
-    await expect(page.getByText('Abs / core', { exact: true })).toHaveCount(0)
-
-    // ...and present the moment the measure becomes sets. This is the distinction
-    // that stopped abs looking like the biggest muscle group (43,368 kg of nothing).
+    // And the same sets, counted, the moment the measure changes.
     await page.getByRole('radio', { name: 'Sets' }).click()
     await expect(page.getByRole('heading', { name: 'Sets by muscle group' })).toBeVisible()
-    await expect(page.getByText('Abs / core', { exact: true })).toBeVisible()
+    expect(await absOnScreen()).toBe(abs.sets)
   })
 
   test('strength progression draws one line per gym, in estimated 1RM', async ({ page }) => {

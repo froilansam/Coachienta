@@ -11,7 +11,9 @@ import { Text } from '@/components/ui/Text'
 import { useSyncStatus } from '@/hooks/useSyncStatus'
 import { useToday } from '@/hooks/useToday'
 import { DayNavigator } from './DayNavigator'
+import type { DayEntry } from '@/lib/domain/food/dayView'
 import { DayTimeline } from './DayTimeline'
+import { EntryDetailSheet } from './EntryDetailSheet'
 import { LogFoodSheet } from './LogFoodSheet'
 import { MacroSummary } from './MacroSummary'
 
@@ -23,6 +25,7 @@ import { MacroSummary } from './MacroSummary'
  */
 export function TodayScreen() {
   const [logOpen, setLogOpen] = useState(false)
+  const [detail, setDetail] = useState<DayEntry | null>(null)
   const today = useToday()
   const sync = useSyncStatus()
 
@@ -112,7 +115,7 @@ export function TodayScreen() {
           }
         />
       ) : today.loadError ? null : (
-        <DayTimeline groups={today.mealGroups} onRemove={today.remove} />
+        <DayTimeline groups={today.mealGroups} onRemove={today.remove} onOpen={setDetail} />
       )}
 
       {today.entryCount > 0 ? (
@@ -123,6 +126,8 @@ export function TodayScreen() {
 
       {/* `day` seeds the sheet's date chip, so logging from a past day lands on
           the day you are looking at rather than silently on today. */}
+      <EntryDetailSheet entry={detail} onClose={() => setDetail(null)} onDelete={today.remove} />
+
       <LogFoodSheet
         open={logOpen}
         onOpenChange={setLogOpen}

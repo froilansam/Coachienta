@@ -29,7 +29,7 @@ export async function getDay(date: string): Promise<DayPayload> {
   const [entriesRes, targetsRes, sessionRes] = await Promise.all([
     db
       .from('food_log_entries')
-      .select('id, meal, food_name, amount, unit, kcal, protein_g, carbs_g, fat_g, confidence, logged_at')
+      .select('id, meal, food_name, amount, unit, kcal, protein_g, carbs_g, fat_g, confidence, logged_at, resolved_by, food_version, notes')
       .eq('logged_on', date)
       .order('logged_at', { ascending: true }),
     db
@@ -60,6 +60,9 @@ export async function getDay(date: string): Promise<DayPayload> {
     fatG: Number(r.fat_g),
     confidence: r.confidence as DayEntry['confidence'],
     loggedAt: r.logged_at as string | null,
+    resolvedBy: (r.resolved_by as DayEntry['resolvedBy']) ?? null,
+    foodVersion: (r.food_version as number | null) ?? null,
+    notes: (r.notes as string | null) ?? null,
   }))
 
   const t = targetsRes.data

@@ -136,6 +136,10 @@ export function useToday(): TodayView {
           fatG: 0,
           confidence: 'medium' as const,
           loggedAt: null,
+          // A queued row has no provenance yet — it has not been resolved server-side.
+          resolvedBy: null,
+          foodVersion: null,
+          notes: null,
           pending: true,
         }
       })
