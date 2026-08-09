@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { closeDb, withDb } from './db'
+import { closeDb, dropUnreferencedPlans, withDb } from './db'
 
 /**
  * P3-2: the day plan, against real Postgres.
@@ -24,10 +24,7 @@ const cleanup = () =>
       `delete from workout_sessions where name like $1 or performed_on = '2019-09-01'`,
       [`${MARK}%`],
     )
-    await c.query(`delete from plan_exercises where plan_id in
-                    (select id from workout_plans where not is_template)`)
-    await c.query(`delete from workout_plans where not is_template`)
-  })
+  }).then(dropUnreferencedPlans)
 
 test.beforeEach(cleanup)
 test.afterAll(cleanup)

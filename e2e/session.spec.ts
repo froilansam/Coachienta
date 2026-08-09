@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { closeDb, withDb } from './db'
+import { closeDb, dropUnreferencedPlans, withDb } from './db'
 
 /**
  * P3-3: the live session, against real Postgres.
@@ -20,10 +20,7 @@ const cleanup = () =>
       [`${MARK}%`],
     )
     await c.query(`delete from workout_sessions where name like $1`, [`${MARK}%`])
-    await c.query(`delete from plan_exercises where plan_id in
-                    (select id from workout_plans where not is_template)`)
-    await c.query(`delete from workout_plans where not is_template`)
-  })
+  }).then(dropUnreferencedPlans)
 
 test.beforeEach(cleanup)
 test.afterAll(cleanup)
@@ -78,7 +75,7 @@ test('a set commits, locks, and starts the rest timer', async ({ page }) => {
   await page.getByRole('checkbox', { name: /Save set 1 of Shoulder Press Machine/ }).click()
 
   // The row locks: its inputs become text and the checkbox reads as saved.
-  await expect(page.getByRole('checkbox', { name: /Set 1 saved/ })).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: /Set 1 of .* saved/ })).toBeVisible()
   // Rest starts automatically on commit (US-2.10) — one less tap with both hands busy.
   await expect(page.getByRole('timer', { name: /Rest, \d+ seconds remaining/ })).toBeVisible()
 
@@ -96,7 +93,7 @@ test('the session strip counts volume from eligible sets only (AC-2.4)', async (
   await page.getByLabel(/KG for set 1 of Leg Press/).fill('100')
   await page.getByLabel(/Reps for set 1 of Leg Press/).fill('10')
   await page.getByRole('checkbox', { name: /Save set 1 of Leg Press/ }).click()
-  await expect(page.getByRole('checkbox', { name: /Set 1 saved/ }).first()).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: /Set 1 of .* saved/ }).first()).toBeVisible()
 
   // A plank has no weight input at all — only seconds.
   await expect(page.getByLabel(/Seconds for set 1 of Plank/)).toBeVisible()
@@ -149,14 +146,37 @@ test('AC-2.1 — a set locks in under 200 ms with no signal', async ({ page, con
   await page.getByLabel(/Reps for set 1 of Shoulder Press Machine/).fill('8')
 
   /**
-   * Measured around the commit itself. The path is one IndexedDB transaction and a
-   * re-render from Dexie — there is nothing to await on the network, which is the
-   * whole design of the screen.
+   * Measured INSIDE the page, from the click event to the DOM showing the row locked.
+   *
+   * Timing this from Node instead meant timing Playwright: a CDP round trip to dispatch
+   * the click, then `waitFor` polling the DOM. Both are tens of milliseconds of harness
+   * on an idle machine and more under a full suite, so a 200 ms budget failed in a full
+   * run and passed in isolation — the classic shape of a flake that looks like a
+   * regression. The window below contains exactly what AC-2.1 claims: one IndexedDB
+   * transaction and a re-render from Dexie, with nothing awaited on the network.
    */
-  const started = Date.now()
+  type Probe = Window & { __commitMs?: number }
+  const SAVED = '[aria-label$=" saved"]'
+  await page.evaluate((sel) => {
+    const w = window as Probe
+    let t0 = 0
+    document.addEventListener('click', () => (t0 = performance.now()), { capture: true, once: true })
+    const obs = new MutationObserver(() => {
+      if (t0 > 0 && document.querySelector(sel) !== null) {
+        w.__commitMs = performance.now() - t0
+        obs.disconnect()
+      }
+    })
+    obs.observe(document.body, { subtree: true, childList: true, attributes: true })
+  }, SAVED)
+  // Nothing is saved yet, so the observer cannot resolve on a pre-existing row.
+  await expect(page.locator(SAVED)).toHaveCount(0)
+
   await page.getByRole('checkbox', { name: /Save set 1 of Shoulder Press Machine/ }).click()
-  await page.getByRole('checkbox', { name: /Set 1 saved/ }).waitFor()
-  const elapsed = Date.now() - started
+  await page.getByRole('checkbox', { name: /Set 1 of .* saved/ }).waitFor()
+
+  const elapsed = await page.evaluate(() => (window as Probe).__commitMs ?? -1)
+  expect(elapsed).toBeGreaterThan(0)
   expect(elapsed).toBeLessThan(200)
 
   await context.setOffline(false)
@@ -174,11 +194,11 @@ test('AC-2.9 — sets logged offline hold in the queue and sync exactly once', a
   // Pull-Ups are bodyweight: reps alone is a complete set.
   await page.getByLabel(/Reps for set 1 of Pull-Ups/).fill('8')
   await page.getByRole('checkbox', { name: /Save set 1 of Pull-Ups/ }).click()
-  await page.getByRole('checkbox', { name: /Set 1 saved/ }).waitFor()
+  await page.getByRole('checkbox', { name: /Set 1 of Pull-Ups saved/ }).waitFor()
 
   await page.getByLabel(/Reps for set 2 of Pull-Ups/).fill('7')
   await page.getByRole('checkbox', { name: /Save set 2 of Pull-Ups/ }).click()
-  await expect(page.getByRole('checkbox', { name: /Set 2 saved/ })).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: /Set 2 of Pull-Ups saved/ })).toBeVisible()
 
   // Both are on screen and locked, and NEITHER has reached Postgres — the queue is
   // holding them.
@@ -223,7 +243,7 @@ test.fixme('AC-2.9 — reopening the app offline restores the logged sets', asyn
   await page.getByLabel(/Reps for set 1 of Pull-Ups/).fill('8')
   await page.getByRole('checkbox', { name: /Save set 1 of Pull-Ups/ }).click()
   await page.reload()
-  await expect(page.getByRole('checkbox', { name: /Set 1 saved/ })).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: /Set 1 of .* saved/ })).toBeVisible()
 })
 
 test('ADD SET appends and carries the weight forward', async ({ page }) => {
@@ -232,7 +252,7 @@ test('ADD SET appends and carries the weight forward', async ({ page }) => {
   await page.getByLabel(/KG for set 1 of Shoulder Press Machine/).fill('55')
   await page.getByLabel(/Reps for set 1 of Shoulder Press Machine/).fill('10')
   await page.getByRole('checkbox', { name: /Save set 1 of Shoulder Press Machine/ }).click()
-  await page.getByRole('checkbox', { name: /Set 1 saved/ }).waitFor()
+  await page.getByRole('checkbox', { name: /Set 1 of .* saved/ }).waitFor()
 
   // The next row is offered pre-filled with the same load — the common case.
   await expect(page.getByLabel(/KG for set 2 of Shoulder Press Machine/)).toHaveValue('55')

@@ -22,6 +22,11 @@ export interface DayEntry {
   fatG: number
   confidence: 'high' | 'medium' | 'low' | 'user_verified'
   loggedAt: string | null
+  /** How the macros were resolved — the provenance the detail view shows. */
+  resolvedBy: 'library' | 'usda' | 'openfoodfacts' | 'ai_estimate' | 'photo' | 'manual' | null
+  /** The `foods.version` in force when this was logged. Entries never move with it. */
+  foodVersion: number | null
+  notes: string | null
   /** True while the row is still only in IndexedDB. */
   pending?: boolean
 }

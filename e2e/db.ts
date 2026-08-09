@@ -41,3 +41,26 @@ export async function closeDb(): Promise<void> {
   await client?.end().catch(() => {})
   client = null
 }
+
+/**
+ * Drop the day-plans a test created, and only those.
+ *
+ * START SESSION copies its template, and the copy inherits the template's name — so a
+ * test's plan carries no `ZZTest` mark and cannot be identified the way its sessions can.
+ * Five specs therefore swept `where not is_template`, which was fine only while the
+ * database held no real sessions. It no longer does: that statement now hits a plan a
+ * real session references, `workout_sessions_plan_id_fkey` is ON DELETE NO ACTION, and
+ * the cleanup raises — taking every test in the file with it.
+ *
+ * Unreferenced is the right test. Each caller deletes its own sessions first, so by the
+ * time this runs a test's plan is orphaned and a real one is still spoken for. The
+ * `plan_id is not null` guard matters: without it a single NULL makes `not in` return
+ * NULL for every row and the delete quietly does nothing.
+ */
+export const dropUnreferencedPlans = () =>
+  withDb(async (c) => {
+    const orphans = `select id from workout_plans where not is_template
+                       and id not in (select plan_id from workout_sessions where plan_id is not null)`
+    await c.query(`delete from plan_exercises where plan_id in (${orphans})`)
+    await c.query(`delete from workout_plans where id in (${orphans})`)
+  })

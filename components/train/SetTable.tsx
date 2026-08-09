@@ -118,7 +118,13 @@ export function SetTable({ block, vm }: { block: ExerciseBlock; vm: SessionState
         variant="commit"
         checked={row.committed}
         disabled={row.committed || !isComplete(row, exercise.load_type)}
-        label={row.committed ? `Set ${row.set_index} saved` : `Save set ${row.set_index} of ${exercise.name}`}
+        // Named both ways round: five exercises each have a "set 1", so `Set 1 saved`
+        // is the twelve-identical-Delete-buttons fault the unsaved branch already avoids.
+        label={
+          row.committed
+            ? `Set ${row.set_index} of ${exercise.name} saved`
+            : `Save set ${row.set_index} of ${exercise.name}`
+        }
         onCheckedChange={() => void vm.commit(row)}
       />
     ),

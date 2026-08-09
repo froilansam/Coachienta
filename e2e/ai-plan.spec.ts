@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { closeDb, withDb } from './db'
+import { closeDb, dropUnreferencedPlans, withDb } from './db'
 
 /**
  * P3-5 — prompt → AI draft plan (PRD-004 §4.2a).
@@ -29,10 +29,7 @@ const cleanup = () =>
       [`${MARK}%`],
     )
     await c.query(`delete from workout_sessions where name like $1`, [`${MARK}%`])
-    await c.query(`delete from plan_exercises where plan_id in
-                    (select id from workout_plans where not is_template)`)
-    await c.query(`delete from workout_plans where not is_template`)
-  })
+  }).then(dropUnreferencedPlans)
 
 test.beforeEach(cleanup)
 test.afterAll(cleanup)

@@ -4,7 +4,7 @@ import { ListRow } from '@/components/ui/ListRow'
 import { NumericValue } from '@/components/ui/NumericValue'
 import { Rule } from '@/components/ui/Rule'
 import { Text } from '@/components/ui/Text'
-import type { MealGroup } from '@/lib/domain/food/dayView'
+import type { DayEntry, MealGroup } from '@/lib/domain/food/dayView'
 
 /**
  * Entries grouped by meal, each with its own subtotal and macro line.
@@ -20,9 +20,12 @@ const TIME = (iso: string | null): string | undefined =>
 export function DayTimeline({
   groups,
   onRemove,
+  onOpen,
 }: {
   groups: readonly MealGroup[]
   onRemove: (id: string) => void
+  /** Tapping a row opens it. Swipe still deletes — one gesture each. */
+  onOpen: (entry: DayEntry) => void
 }) {
   return (
     <div className="flex flex-col gap-6">
@@ -59,6 +62,7 @@ export function DayTimeline({
                   <NumericValue value={e.kcal} decimals={0} />
                 </span>
               }
+              onClick={() => onOpen(e)}
               swipeActions={[{ label: 'Delete', tone: 'negative', onAction: () => onRemove(e.id) }]}
             />
           ))}

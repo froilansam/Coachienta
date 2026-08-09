@@ -7,7 +7,7 @@ import {
 const entry = (o: Partial<DayEntry> & { id: string }): DayEntry => ({
   meal: 'Lunch', foodName: 'x', amount: 100, unit: 'g',
   kcal: 0, proteinG: 0, carbsG: 0, fatG: 0,
-  confidence: 'high', loggedAt: null, ...o,
+  confidence: 'high', loggedAt: null, resolvedBy: null, foodVersion: null, notes: null, ...o,
 })
 
 /** The real seeded targets (PRD-006 §3.3). */
