@@ -80,7 +80,7 @@ works. `docs/PRD-008-credentials-setup.md` §8 has the per-provider steps.
 | | |
 |---|---|
 | Shipped | Food logging with photo/label reading · training log with PRs and trends · profile, goals and coach rules · AI plan builder · AI coach with SQL tools |
-| Tests | 448 unit, 119 E2E (3 skipped — 2 for a known service-worker gap, 1 when the day's AI quota is spent) |
+| Tests | 455 unit, 121 E2E (3 skipped — 2 for a known service-worker gap, 1 when the day's AI quota is spent) |
 | Not built | Vector search over logged days (`search_logs`), coach message feedback, conversation persistence |
 
 Per-feature acceptance-criteria coverage is tracked honestly in each PRD's build-status
