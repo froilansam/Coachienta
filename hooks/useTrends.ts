@@ -2,13 +2,31 @@
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import type { TrendsPayload } from '@/app/api/data/trends/route'
+import type { BandPoint } from '@/components/patterns/BandLine'
+import type { AxisMarker, Line } from '@/components/patterns/LineSet'
+import type { Bar } from '@/components/patterns/StackedBars'
+import type { TickBar } from '@/components/patterns/TickBars'
+import type { Dot, Lane } from '@/components/patterns/DotPlot'
+import type { GridRow } from '@/components/patterns/WeekGrid'
 import { labelOf } from '@/lib/domain/coach/priorities'
 import { todayLocal } from '@/lib/domain/date'
+import {
+  foodCalendar,
+  kcalSeries,
+  macroSplit,
+  proteinBars,
+  proteinStreak,
+  qualitySlices,
+  qualitySummary,
+  toneToCount,
+  type QualitySlice,
+} from '@/lib/domain/food/trends'
 import {
   adherence,
   adherenceSummary,
   calendar,
   frequencySummary,
+  gymSwitchMarkers,
   leadKind,
   progressionLines,
   progressionSubjects,
@@ -20,63 +38,74 @@ import {
   type CalendarWeek,
   type ProgressionSubject,
 } from '@/lib/domain/train/trends'
-import type { Bar } from '@/components/patterns/StackedBars'
-import type { Dot, Lane } from '@/components/patterns/DotPlot'
-import type { Line } from '@/components/patterns/LineSet'
-import type { GridRow } from '@/components/patterns/WeekGrid'
 
 /**
  * The trends screen, as one flat view-model.
  *
- * Every number here is derived — the hook fetches once and the two switches
- * (`volume`/`sets`, and which exercise) re-derive from the same payload with no
- * second request. Six charts behind six spinners would be a worse screen than six
- * charts that appear together.
+ * Food and train share one payload and one range control. Switching the domain
+ * re-derives charts with no second request for the inactive side — both arrive
+ * together so the segment control never shows a spinner mid-tap.
  */
 export type Measure = 'volume_kg' | 'set_count'
 export type Range = '28' | '84' | '168'
+export type TrendsDomain = 'food' | 'train'
 
 export interface TrendsView {
   isLoading: boolean
   loadError: boolean
   retry: () => void
-  isEmpty: boolean
 
+  domain: TrendsDomain
+  setDomain: (d: TrendsDomain) => void
   range: Range
   setRange: (r: Range) => void
-  gymName: string
 
-  // -- volume / sets by muscle group ---------------------------------------
+  // -- train ----------------------------------------------------------------
+  trainEmpty: boolean
+  gymId: string | null
+  gymName: string
+  gymOptions: Array<{ value: string; label: string }>
+  setGymId: (id: string) => void
+
   measure: Measure
   setMeasure: (m: Measure) => void
   bars: Bar[]
   legend: Array<{ key: string; label: string; value: number; tint: number }>
   measureUnit: string
-  /** Non-null only when the parts do not add up — AC-2.14's visible failure. */
   leak: string | null
 
-  // -- strength progression -------------------------------------------------
   subjects: ProgressionSubject[]
   subjectId: string | null
   setSubjectId: (id: string) => void
   lines: Line[]
+  lineMarkers: AxisMarker[]
   lineUnit: string
   betterIsDown: boolean
 
-  // -- PR timeline ----------------------------------------------------------
   prDots: Dot[]
   prLanes: Lane[]
   prCount: number
 
-  // -- session frequency ----------------------------------------------------
   weeks: GridRow[]
   weekdayLabels: string[]
   target: number
   frequency: string
 
-  // -- priority adherence ---------------------------------------------------
   adherenceRows: AdherenceRow[]
   adherenceNote: string | null
+
+  // -- food -----------------------------------------------------------------
+  foodEmpty: boolean
+  kcalPoints: BandPoint[]
+  proteinTickBars: TickBar[]
+  proteinStreakDays: number
+  proteinCaption: string
+  macroBars: Bar[]
+  macroLegend: Array<{ key: string; label: string; value: number; tint: number }>
+  foodWeeks: GridRow[]
+  quality: QualitySlice[]
+  qualityNote: string
+  averagesCaption: string
 }
 
 const WEEKDAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
@@ -85,15 +114,22 @@ const TARGET = 4
 const dayLabel = (iso: string): string =>
   new Date(`${iso}T00:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
 
+const shortDay = (iso: string): string =>
+  new Date(`${iso}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+
 export function useTrends(): TrendsView {
+  const [domain, setDomain] = useState<TrendsDomain>('train')
   const [range, setRange] = useState<Range>('84')
   const [measure, setMeasure] = useState<Measure>('volume_kg')
   const [picked, setPicked] = useState<string | null>(null)
+  const [gymOverride, setGymOverride] = useState<string | null>(null)
 
   const q = useQuery<TrendsPayload>({
-    queryKey: ['trends', range],
+    queryKey: ['trends', range, gymOverride],
     queryFn: async () => {
-      const res = await fetch(`/api/data/trends?days=${range}`)
+      const params = new URLSearchParams({ days: range })
+      if (gymOverride) params.set('gym', gymOverride)
+      const res = await fetch(`/api/data/trends?${params}`)
       if (!res.ok) throw new Error(`trends: ${res.status}`)
       return res.json()
     },
@@ -106,11 +142,11 @@ export function useTrends(): TrendsView {
   const total = useMemo(() => data?.total ?? [], [data])
   const tops = useMemo(() => data?.tops ?? [], [data])
   const sessions = useMemo(() => data?.sessions ?? [], [data])
+  const nutritionDays = useMemo(() => data?.nutrition.days ?? [], [data])
 
   // -- stacked bars ---------------------------------------------------------
   const order = useMemo(() => rampOrder(muscle, measure), [muscle, measure])
   const tintOf = useMemo(() => new Map(order.map((k, i) => [k, i])), [order])
-
   const stacked = useMemo(() => stackByWeek(muscle, total, measure), [muscle, total, measure])
 
   const bars = useMemo<Bar[]>(
@@ -134,13 +170,6 @@ export function useTrends(): TrendsView {
           label: labelOf(key),
           value: muscle.filter((m) => m.muscle_group === key).reduce((n, m) => n + m[measure], 0),
         }))
-        /**
-         * A zero is dropped, not listed. `volume_by_muscle` returns abs/core with
-         * `0` because the sets exist, but "Abs / core — 0 kg" in a legend reads as a
-         * broken total rather than as a definition; the same reason `NumericValue`
-         * renders null as a dash and never as 0. Switch to SETS and it reappears
-         * with a real number.
-         */
         .filter((it) => it.value > 0),
     [order, muscle, measure],
   )
@@ -161,6 +190,7 @@ export function useTrends(): TrendsView {
         : progressionLines(tops, subjectId),
     [tops, subjectId],
   )
+  const lineMarkers = useMemo(() => gymSwitchMarkers(progression.lines), [progression.lines])
 
   // -- PR timeline ----------------------------------------------------------
   const prDots = useMemo<Dot[]>(
@@ -205,18 +235,126 @@ export function useTrends(): TrendsView {
     [cal],
   )
 
-  // -- adherence ------------------------------------------------------------
   const adherenceRows = useMemo(() => adherence(data?.share ?? []), [data])
+
+  // -- food -----------------------------------------------------------------
+  const kcalPoints = useMemo<BandPoint[]>(
+    () =>
+      kcalSeries(nutritionDays).map((p) => ({
+        on: p.on,
+        value: p.kcal,
+        low: p.low,
+        high: p.high,
+        label: `${Math.round(p.kcal)} kcal`,
+      })),
+    [nutritionDays],
+  )
+
+  const proteinTickBars = useMemo<TickBar[]>(
+    () =>
+      proteinBars(nutritionDays)
+        .slice(-21)
+        .map((p) => ({
+          key: p.on,
+          label: shortDay(p.on),
+          value: p.protein,
+          tick: p.target,
+          met: p.met,
+        })),
+    [nutritionDays],
+  )
+
+  const streak = useMemo(() => proteinStreak(nutritionDays), [nutritionDays])
+  const avg = data?.nutrition.averages
+  const split = useMemo(
+    () =>
+      avg
+        ? macroSplit({
+            protein_mean: avg.protein_mean,
+            carbs_mean: avg.carbs_mean,
+            fat_mean: avg.fat_mean,
+          })
+        : { protein: 0, carbs: 0, fat: 0, total: 0 },
+    [avg],
+  )
+
+  const macroBars = useMemo<Bar[]>(() => {
+    if (split.total <= 0) return []
+    const segs = [
+      { key: 'protein', label: 'Protein', value: split.protein, tint: 0 },
+      { key: 'carbs', label: 'Carbs', value: split.carbs, tint: 1 },
+      { key: 'fat', label: 'Fat', value: split.fat, tint: 2 },
+    ]
+    return [
+      {
+        key: 'avg',
+        label: 'AVG/DAY',
+        total: split.total,
+        segments: segs,
+      },
+    ]
+  }, [split])
+
+  const macroLegend = useMemo(
+    () =>
+      macroBars[0]?.segments.map((s) => ({
+        key: s.key,
+        label: s.label,
+        value: s.value,
+        tint: s.tint,
+      })) ?? [],
+    [macroBars],
+  )
+
+  const foodCal = useMemo(() => foodCalendar(nutritionDays, today, 12), [nutritionDays, today])
+  const foodWeeks = useMemo<GridRow[]>(
+    () =>
+      foodCal.map((w) => ({
+        key: w.week_start,
+        label: weekLabel(w.week_start),
+        met: w.onTargetDays >= 5,
+        count: w.onTargetDays,
+        cells: w.days.map((d) => ({
+          key: d.on,
+          count: toneToCount(d.tone),
+          filler: d.filler,
+          label: d.filler
+            ? null
+            : d.tone === 'missed'
+              ? `${dayLabel(d.on)} — not logged`
+              : d.tone === 'on_target'
+                ? `${dayLabel(d.on)} — on target`
+                : `${dayLabel(d.on)} — logged`,
+        })),
+      })),
+    [foodCal],
+  )
+
+  const quality = useMemo(
+    () => qualitySlices(data?.nutrition.confidence ?? { high: 0, medium: 0, low: 0, user_verified: 0 }),
+    [data],
+  )
+
+  const gymOptions = useMemo(
+    () => (data?.gyms ?? []).map((g) => ({ value: g.id, label: g.name })),
+    [data],
+  )
 
   return {
     isLoading: q.isPending,
     loadError: q.isError,
     retry: () => void q.refetch(),
-    isEmpty: sessions.length === 0,
 
+    domain,
+    setDomain,
     range,
     setRange,
+
+    trainEmpty: sessions.length === 0,
+    gymId: data?.gymId ?? null,
     gymName: data?.gyms.find((g) => g.id === data.gymId)?.name ?? '—',
+    gymOptions,
+    setGymId: setGymOverride,
 
     measure,
     setMeasure,
@@ -229,6 +367,7 @@ export function useTrends(): TrendsView {
     subjectId,
     setSubjectId: setPicked,
     lines: progression.lines,
+    lineMarkers,
     lineUnit: progression.unit,
     betterIsDown: progression.betterIsDown,
 
@@ -243,5 +382,22 @@ export function useTrends(): TrendsView {
 
     adherenceRows,
     adherenceNote: adherenceSummary(adherenceRows),
+
+    foodEmpty: nutritionDays.length === 0,
+    kcalPoints,
+    proteinTickBars,
+    proteinStreakDays: streak,
+    proteinCaption:
+      streak === 0
+        ? 'No current protein streak — a miss or a gap resets the count.'
+        : `${streak} day${streak === 1 ? '' : 's'} in a row at or above target.`,
+    macroBars,
+    macroLegend,
+    foodWeeks,
+    quality,
+    qualityNote: qualitySummary(quality),
+    averagesCaption: avg
+      ? `Across ${avg.logged_days} logged day${avg.logged_days === 1 ? '' : 's'} · mean ${Math.round(avg.kcal_mean)} kcal · protein ${avg.protein_mean} g`
+      : 'No averages yet.',
   }
 }

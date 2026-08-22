@@ -1,10 +1,19 @@
 import 'server-only'
 import { db } from '@/lib/db/client'
+import {
+  nutritionAverages,
+  nutritionSummary,
+  type NutritionAverages,
+  type NutritionBucket,
+} from '@/lib/db/queries/coach'
+import { addDays, todayLocal } from '@/lib/domain/date'
+import type { ConfidenceCounts } from '@/lib/domain/food/trends'
 
 /**
- * Training trends. Every figure is computed on read — there are no stored
- * snapshots, which is what stopped the spreadsheet's Next Session Targets tab going
- * 57 days stale (§3.4).
+ * Training + nutrition trends. Every figure is computed on read — there are no
+ * stored snapshots, which is what stopped the spreadsheet's Next Session Targets
+ * tab going 57 days stale (§3.4). Nutrition reuses the coach RPCs so a chart and
+ * a coaching answer cannot disagree (PRD-003 §5.3).
  */
 export interface MuscleWeek {
   week_start: string
@@ -106,3 +115,44 @@ export async function trainingTrends(gymId: string, days = 84) {
 }
 
 export type TrainingTrends = Awaited<ReturnType<typeof trainingTrends>>
+
+export interface NutritionTrends {
+  days: NutritionBucket[]
+  averages: NutritionAverages
+  confidence: ConfidenceCounts
+  start: string
+  end: string
+}
+
+/** Entry counts by confidence for the data-quality strip. */
+async function confidenceCounts(start: string, end: string): Promise<ConfidenceCounts> {
+  const { data, error } = await db
+    .from('food_log_entries')
+    .select('confidence')
+    .gte('logged_on', start)
+    .lte('logged_on', end)
+  if (error) throw new Error(error.message)
+  const counts: ConfidenceCounts = { high: 0, medium: 0, low: 0, user_verified: 0 }
+  for (const row of data ?? []) {
+    const c = row.confidence as keyof ConfidenceCounts
+    if (c in counts) counts[c] += 1
+  }
+  return counts
+}
+
+export async function nutritionTrends(days = 84): Promise<NutritionTrends> {
+  const end = todayLocal()
+  const start = addDays(end, -(Number.isFinite(days) ? days : 84) + 1)
+  const [summary, averages, confidence] = await Promise.all([
+    nutritionSummary(start, end, 'day'),
+    nutritionAverages(start, end),
+    confidenceCounts(start, end),
+  ])
+  return {
+    days: summary.buckets,
+    averages,
+    confidence,
+    start,
+    end,
+  }
+}

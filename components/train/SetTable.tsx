@@ -16,6 +16,9 @@ import { isComplete, type SetRow } from '@/lib/domain/train/session'
  * fixed position, and it allows committing out of order. `Checkbox variant="commit"`
  * is 32px and always in the same column so it can be found without looking.
  *
+ * Unchecking unlocks the row again (same checkbox, Hevy). Values stay; a re-tick
+ * upserts the same id.
+ *
  * `PREV` is never hidden. `—` when there is no history at this gym (US-2.4).
  */
 export function SetTable({ block, vm }: { block: ExerciseBlock; vm: SessionState }) {
@@ -117,15 +120,17 @@ export function SetTable({ block, vm }: { block: ExerciseBlock; vm: SessionState
       <Checkbox
         variant="commit"
         checked={row.committed}
-        disabled={row.committed || !isComplete(row, exercise.load_type)}
-        // Named both ways round: five exercises each have a "set 1", so `Set 1 saved`
-        // is the twelve-identical-Delete-buttons fault the unsaved branch already avoids.
+        disabled={!row.committed && !isComplete(row, exercise.load_type)}
+        // Named both ways: five exercises each have a "set 1".
         label={
           row.committed
-            ? `Set ${row.set_index} of ${exercise.name} saved`
+            ? `Unsave set ${row.set_index} of ${exercise.name}`
             : `Save set ${row.set_index} of ${exercise.name}`
         }
-        onCheckedChange={() => void vm.commit(row)}
+        onCheckedChange={(on) => {
+          if (on) void vm.commit(row)
+          else void vm.uncommit(row)
+        }}
       />
     ),
   })

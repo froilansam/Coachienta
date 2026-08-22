@@ -216,6 +216,24 @@ export function progressionLines(
   return { lines: [...byGym.values()], unit, betterIsDown: loadType === 'assisted' }
 }
 
+/**
+ * First day of every gym line except the earliest overall — dashed markers on
+ * the progression chart so a gym change is visible without inventing a bridge
+ * between incompatible cable stacks (PRD-004 §4.4 ⚠️).
+ */
+export function gymSwitchMarkers(
+  lines: readonly ProgressionLine[],
+): Array<{ on: string; label: string }> {
+  const starts = lines
+    .map((l) => {
+      const first = l.points[0]
+      return first ? { on: first.on, label: l.label } : null
+    })
+    .filter((m): m is { on: string; label: string } => m !== null)
+    .sort((a, b) => a.on.localeCompare(b.on))
+  return starts.slice(1)
+}
+
 // ---------------------------------------------------------------------------
 // Session frequency
 // ---------------------------------------------------------------------------

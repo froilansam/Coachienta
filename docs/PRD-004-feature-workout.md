@@ -405,7 +405,8 @@ TARGET   10 kg × 14   ·   top of 10–15 range, then 12.5 kg
 **Design decisions**
 
 - **A committed cell is text, not a disabled input.** Locked should look locked, not greyed-out-editable.
-- **The next row is offered pre-filled with the same load.** The common case is the same weight again; retyping it three times per exercise is the friction that sends people back to paper.
+- **Uncheck unlocks; re-tick saves.** The checkbox is a toggle (Hevy). Unchecking queues a delete and keeps the numbers as a draft under the same id; re-ticking upserts. Rest does not restart on a correction. A reload mid-edit keeps the unlocked draft in the Dexie mirror so a logged set cannot vanish from a refresh.
+- **The next row is offered pre-filled with the same load.** The common case is the same weight again; retyping it three times per exercise is the friction that sends people back to paper. Re-saving after an uncheck does not pile on another blank row.
 - **Rest is stored as a deadline, not a countdown.** A ticking `setState` in an effect is a cascading render and it drifts whenever the tab is backgrounded — which is most of a rest period on a phone. One clock, one subtraction at render.
 - **Volume-less sets are counted and named.** The strip says how many carry no volume by definition, so a total of 1,000 kg over three sets is explicable rather than suspicious (AC-2.4).
 - **`FINISH` only stamps the clock**, and is idempotent — tapping twice must not move the time or the duration would change per tap. The screen says so, because "finish" otherwise implies the sets were only now being saved.
@@ -423,6 +424,7 @@ TARGET   10 kg × 14   ·   top of 10–15 range, then 12.5 kg
 | US-2.10 | Rest starts automatically on commit | ✅ |
 | AC-2.12 | Per-side rows exist and store `side`; `+ LEFT` / `+ RIGHT` | ⚠️ built, no unilateral exercise seeded to test against |
 | AC-2.5, AC-2.7, AC-2.14 | See §4.4a | ✅ shipped in P3-4 |
+| AC-2.24 | `e2e/session.spec.ts` — uncheck unlocks inputs; re-tick persists corrected weight/reps | ✅ |
 
 ---
 
@@ -572,6 +574,8 @@ That last chart is the one the spreadsheet couldn't produce and the one most lik
 | AC-2.21 | Train lists sessions grouped by `performed_on`; tapping opens `/train/session/[id]`. |
 | AC-2.22 | Deleting a session removes the session and all its sets (cascade); they no longer appear in lists, volume, or LAST/BEST. Confirmed by test. |
 | AC-2.23 | Mid live session: add an exercise → new block with PREV; remove an exercise that has committed sets → those sets are gone after confirm. Session stays open. |
+| AC-2.24 | Unchecking a committed set unlocks its inputs; re-ticking persists the corrected values under the same set id (one row in Postgres). |
+| AC-2.25 | Trends gym picker scopes volume/PRs to the selected gym; strength chart marks each additional gym line's start with a dashed axis marker. |
 
 ---
 
