@@ -81,7 +81,7 @@ async function logSet(
   await page.getByLabel(new RegExp(`KG for set 1 of ${exercise}`)).fill(weight)
   await page.getByLabel(new RegExp(`Reps for set 1 of ${exercise}`)).fill(reps)
   await page.getByRole('checkbox', { name: new RegExp(`Save set 1 of ${exercise}`) }).click()
-  await page.getByRole('checkbox', { name: new RegExp(`Set 1 of ${exercise} saved`) }).waitFor()
+  await page.getByRole('checkbox', { name: new RegExp(`Unsave set 1 of ${exercise}`) }).waitFor()
 }
 
 // ---------------------------------------------------------------------------

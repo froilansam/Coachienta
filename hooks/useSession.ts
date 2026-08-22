@@ -4,7 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { SessionPayload } from '@/app/api/data/session/route'
 import { local } from '@/lib/offline/db'
-import { enqueue } from '@/lib/offline/sync'
+import { SYNCED_EVENT, enqueue } from '@/lib/offline/sync'
 import {
   blankSet,
   formatDuration,
@@ -65,6 +65,11 @@ export interface SessionState {
   setValue: (row: SetRow, field: 'weight_kg' | 'reps' | 'duration_sec', v: number | null) => void
   toggleWarmup: (row: SetRow) => void
   commit: (row: SetRow) => Promise<void>
+  /**
+   * Unlocks a saved set so its numbers can be changed (Hevy checkbox toggle).
+   * Queues a delete and keeps the values as a draft under the same id.
+   */
+  uncommit: (row: SetRow) => Promise<void>
   addSet: (position: number, side?: 'left' | 'right' | null) => void
   removeDraft: (id: string) => void
   setRest: (position: number, sec: number) => void
@@ -124,6 +129,11 @@ export function useSession(sessionId: string): SessionState {
   const [restBy, setRestBy] = useState<Record<number, number>>({})
   const [flashKeys, setFlashKeys] = useState<Set<string>>(new Set())
   const [prs, setPrs] = useState<Record<string, PrVerdict>>({})
+  /**
+   * Ids that have already started a rest timer this visit. Re-saving after an
+   * uncheck must not restart rest — you are correcting numbers, not finishing a set.
+   */
+  const [restedIds, setRestedIds] = useState<Set<string>>(() => new Set())
   const [isFinishing, setIsFinishing] = useState(false)
   const [startedAt] = useState(() => Date.now())
   const [now, setNow] = useState(() => Date.now())
@@ -148,32 +158,84 @@ export function useSession(sessionId: string): SessionState {
     [],
   )
 
+  /**
+   * Deletes still in the queue. Without this, uncheck → refetch would bring the
+   * row back as locked while the delete is still uploading (same race as food).
+   */
+  const pendingDeleteIds = useLiveQuery(
+    async () => {
+      const queued = await local.queue.where('state').notEqual('synced').toArray()
+      return new Set(
+        queued.filter((m) => m.table === MIRROR_TABLE && m.op === 'delete').map((m) => m.id),
+      )
+    },
+    [],
+    new Set<string>(),
+  )
+
   // One ticking clock for the session duration and the rest countdown.
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(t)
   }, [])
 
+  /** Refetch once a set write lands, so the server view matches the mirror. */
+  useEffect(() => {
+    const onSynced = (e: Event) => {
+      const table = (e as CustomEvent<{ table?: string }>).detail?.table
+      if (table !== undefined && table !== MIRROR_TABLE) return
+      void qc.invalidateQueries({ queryKey: ['session', sessionId] })
+    }
+    window.addEventListener(SYNCED_EVENT, onSynced)
+    return () => window.removeEventListener(SYNCED_EVENT, onSynced)
+  }, [qc, sessionId])
+
+  const mirrored = useMemo<SetRow[]>(() => {
+    return (pending ?? []).map((r) => {
+      const data = r.data as SetRow
+      return {
+        ...data,
+        id: r.id,
+        derived: false,
+        // Unchecked drafts persist in the mirror with `committed: false` so a
+        // reload does not erase a set the user is mid-correcting.
+        committed: data.committed !== false,
+      }
+    })
+  }, [pending])
+
   const committed = useMemo<SetRow[]>(() => {
-    const server = (data?.sets ?? []).map((s) => ({
-      id: s.id,
-      exercise_id: s.exercise_id,
-      position: s.position,
-      set_index: s.set_index,
-      kind: s.kind as SetRow['kind'],
-      weight_kg: s.weight_kg,
-      reps: s.reps,
-      duration_sec: s.duration_sec,
-      side: (s.side as SetRow['side']) ?? null,
-      committed: true,
-      derived: false,
-    }))
-    const local = (pending ?? []).map((r) => ({ ...(r.data as SetRow), committed: true, derived: false }))
+    const server = (data?.sets ?? [])
+      .filter((s) => !pendingDeleteIds?.has(s.id))
+      .map((s) => ({
+        id: s.id,
+        exercise_id: s.exercise_id,
+        position: s.position,
+        set_index: s.set_index,
+        kind: s.kind as SetRow['kind'],
+        weight_kg: s.weight_kg,
+        reps: s.reps,
+        duration_sec: s.duration_sec,
+        side: (s.side as SetRow['side']) ?? null,
+        committed: true,
+        derived: false,
+      }))
     // Local wins on id collision: it is the newer write by definition.
     const byId = new Map(server.map((s) => [s.id, s]))
-    for (const l of local) byId.set(l.id, l)
+    for (const l of mirrored.filter((r) => r.committed)) byId.set(l.id, l)
     return [...byId.values()]
-  }, [data?.sets, pending])
+  }, [data?.sets, mirrored, pendingDeleteIds])
+
+  /**
+   * Unlocked rows from the mirror, overlaid by in-memory draft edits.
+   * In-memory wins so keystrokes do not wait on IndexedDB.
+   */
+  const draftsMerged = useMemo<Record<string, SetRow>>(() => {
+    const out: Record<string, SetRow> = {}
+    for (const r of mirrored.filter((row) => !row.committed)) out[r.id] = r
+    for (const [id, row] of Object.entries(drafts)) out[id] = row
+    return out
+  }, [mirrored, drafts])
 
   /** Memoised: a fresh `[]` / `{}` each render defeats every memo below. */
   const items = useMemo(() => data?.session.items ?? [], [data])
@@ -200,7 +262,7 @@ export function useSession(sessionId: string): SessionState {
       }
       const real = [
         ...committed.filter((r) => r.position === position),
-        ...Object.values(drafts).filter((d) => d.position === position),
+        ...Object.values(draftsMerged).filter((d) => d.position === position),
       ]
       /**
        * An exercise with nothing on it yet gets one derived blank row, with a
@@ -225,7 +287,7 @@ export function useSession(sessionId: string): SessionState {
         restSec: restBy[position] ?? 90,
       }
     })
-  }, [items, committed, drafts, history, restBy])
+  }, [items, committed, draftsMerged, history, restBy])
 
   /**
    * Takes the ROW, not an id. A derived blank row is not in `drafts` yet, and the
@@ -252,6 +314,7 @@ export function useSession(sessionId: string): SessionState {
        * still upserts on the same id (AC-2.9).
        */
       const persistedId = row.derived ? crypto.randomUUID() : row.id
+      const isResave = restedIds.has(persistedId)
 
       /**
        * PR decided here, on the client, before the write. §4.3 requires the stamp
@@ -309,23 +372,75 @@ export function useSession(sessionId: string): SessionState {
       setDrafts((prev) => {
         const next = { ...prev }
         delete next[row.id]
-        // The next row is offered immediately, pre-filled with this weight.
-        const sibling = blankSet(
-          row.exercise_id,
-          row.position,
-          [...committed.filter((r) => r.position === row.position), row],
-          row.side,
+        /**
+         * Re-saving after an uncheck must not pile on another blank row — the next
+         * set was already offered on the first commit.
+         */
+        const hasOpen = Object.values(next).some(
+          (d) => d.position === row.position && d.side === row.side && !d.committed,
         )
-        next[sibling.id] = sibling
+        if (!hasOpen) {
+          const sibling = blankSet(
+            row.exercise_id,
+            row.position,
+            [...committed.filter((r) => r.position === row.position), { ...row, id: persistedId }],
+            row.side,
+          )
+          next[sibling.id] = sibling
+        }
         return next
       })
 
       setFlashKeys((prev) => new Set(prev).add(persistedId))
       if (verdict.kinds.length > 0) setPrs((prev) => ({ ...prev, [persistedId]: verdict }))
-      const seconds = restBy[row.position] ?? 90
-      if (seconds > 0) setRestUntil({ at: Date.now() + seconds * 1000, position: row.position })
+      else {
+        setPrs((prev) => {
+          const next = { ...prev }
+          delete next[persistedId]
+          return next
+        })
+      }
+      setRestedIds((prev) => new Set(prev).add(persistedId))
+      if (!isResave) {
+        const seconds = restBy[row.position] ?? 90
+        if (seconds > 0) setRestUntil({ at: Date.now() + seconds * 1000, position: row.position })
+      }
     },
-    [loadTypeOf, sessionId, committed, restBy, priorSets, data?.session.performed_on],
+    [loadTypeOf, sessionId, committed, restBy, priorSets, data?.session.performed_on, restedIds],
+  )
+
+  const uncommit = useCallback(
+    async (row: SetRow) => {
+      if (!row.committed || row.derived) return
+
+      /**
+       * Presence in `workout_sets` is the commit bit — there is no soft flag. Uncheck
+       * deletes the row (same queue as food deletes) and keeps the numbers as a draft
+       * under the same id so a re-tick upserts instead of duplicating.
+       */
+      const unlocked: SetRow = { ...row, committed: false, derived: false }
+      await enqueue({ id: row.id, table: MIRROR_TABLE, op: 'delete', payload: {} })
+      await local.rows.put({
+        id: row.id,
+        table: MIRROR_TABLE,
+        day: sessionId,
+        data: unlocked,
+        state: 'pending',
+      })
+
+      setDrafts((prev) => ({ ...prev, [row.id]: unlocked }))
+      setPrs((prev) => {
+        const next = { ...prev }
+        delete next[row.id]
+        return next
+      })
+      setFlashKeys((prev) => {
+        const next = new Set(prev)
+        next.delete(row.id)
+        return next
+      })
+    },
+    [sessionId],
   )
 
   /**
@@ -464,15 +579,19 @@ export function useSession(sessionId: string): SessionState {
         return { ...prev, [row.id]: { ...base, kind: base.kind === 'warmup' ? 'working' : 'warmup' } }
       }),
     commit,
+    uncommit,
     addSet: (position, side = null) =>
       setDrafts((prev) => {
         const item = items[position - 1]
         if (!item) return prev
         const existing = [
           ...committed.filter((r) => r.position === position),
+          ...Object.values(draftsMerged).filter((d) => d.position === position),
           ...Object.values(prev).filter((d) => d.position === position),
         ]
-        const row = blankSet(item.exercise_id, position, existing, side)
+        // Deduplicate by id — draftsMerged and prev can both hold the same row.
+        const byId = new Map(existing.map((r) => [r.id, r]))
+        const row = blankSet(item.exercise_id, position, [...byId.values()], side)
         return { ...prev, [row.id]: row }
       }),
     removeDraft: (id) =>

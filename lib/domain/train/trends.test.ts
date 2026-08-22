@@ -11,6 +11,7 @@ import {
   mondayOf,
   progressionLines,
   progressionSubjects,
+  gymSwitchMarkers,
   rampOrder,
   stackByWeek,
 } from './trends'
@@ -290,5 +291,64 @@ describe('leadKind', () => {
   it('leads with the strongest claim the set makes', () => {
     expect(leadKind(['volume_set', 'weight'])).toBe('weight')
     expect(leadKind(['reps_at_weight', 'volume_set'])).toBe('reps_at_weight')
+  })
+})
+
+describe('gymSwitchMarkers', () => {
+  it('marks every gym line start after the earliest', () => {
+    const { lines } = progressionLines(
+      [
+        {
+          exercise_id: 'e1',
+          exercise_name: 'Press',
+          muscle_group: 'chest',
+          load_type: 'external_weight',
+          gym_id: 'g1',
+          gym_name: 'Home',
+          performed_on: '2026-01-01',
+          weight_kg: 50,
+          reps: 8,
+          duration_sec: null,
+        },
+        {
+          exercise_id: 'e1',
+          exercise_name: 'Press',
+          muscle_group: 'chest',
+          load_type: 'external_weight',
+          gym_id: 'g1',
+          gym_name: 'Home',
+          performed_on: '2026-01-08',
+          weight_kg: 52.5,
+          reps: 8,
+          duration_sec: null,
+        },
+        {
+          exercise_id: 'e1',
+          exercise_name: 'Press',
+          muscle_group: 'chest',
+          load_type: 'external_weight',
+          gym_id: 'g2',
+          gym_name: 'Travel',
+          performed_on: '2026-02-01',
+          weight_kg: 40,
+          reps: 10,
+          duration_sec: null,
+        },
+        {
+          exercise_id: 'e1',
+          exercise_name: 'Press',
+          muscle_group: 'chest',
+          load_type: 'external_weight',
+          gym_id: 'g2',
+          gym_name: 'Travel',
+          performed_on: '2026-02-08',
+          weight_kg: 42.5,
+          reps: 10,
+          duration_sec: null,
+        },
+      ],
+      'e1',
+    )
+    expect(gymSwitchMarkers(lines)).toEqual([{ on: '2026-02-01', label: 'Travel' }])
   })
 })

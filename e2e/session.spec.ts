@@ -75,7 +75,7 @@ test('a set commits, locks, and starts the rest timer', async ({ page }) => {
   await page.getByRole('checkbox', { name: /Save set 1 of Shoulder Press Machine/ }).click()
 
   // The row locks: its inputs become text and the checkbox reads as saved.
-  await expect(page.getByRole('checkbox', { name: /Set 1 of .* saved/ })).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: /Unsave set 1 of .*/ })).toBeVisible()
   // Rest starts automatically on commit (US-2.10) — one less tap with both hands busy.
   await expect(page.getByRole('timer', { name: /Rest, \d+ seconds remaining/ })).toBeVisible()
 
@@ -87,13 +87,41 @@ test('a set commits, locks, and starts the rest timer', async ({ page }) => {
   expect(Number(saved!.volume_kg)).toBe(690)
 })
 
+test('unchecking a set unlocks it; re-ticking saves the correction', async ({ page }) => {
+  await startSession(page, 'Day 1 Push', `${MARK} edit set`)
+
+  await page.getByLabel(/KG for set 1 of Shoulder Press Machine/).fill('50')
+  await page.getByLabel(/Reps for set 1 of Shoulder Press Machine/).fill('10')
+  await page.getByRole('checkbox', { name: /Save set 1 of Shoulder Press Machine/ }).click()
+  await expect(page.getByRole('checkbox', { name: /Unsave set 1 of .*/ })).toBeVisible()
+  // Inputs become text while locked.
+  await expect(page.getByLabel(/KG for set 1 of Shoulder Press Machine/)).toHaveCount(0)
+
+  await page.getByRole('checkbox', { name: /Unsave set 1 of Shoulder Press Machine/ }).click()
+  // Unlocked: inputs return with the previous values, rest does not restart from a correction.
+  await expect(page.getByLabel(/KG for set 1 of Shoulder Press Machine/)).toHaveValue('50')
+  await page.getByLabel(/KG for set 1 of Shoulder Press Machine/).fill('55')
+  await page.getByLabel(/Reps for set 1 of Shoulder Press Machine/).fill('8')
+  await page.getByRole('checkbox', { name: /Save set 1 of Shoulder Press Machine/ }).click()
+  await expect(page.getByRole('checkbox', { name: /Unsave set 1 of .*/ })).toBeVisible()
+
+  await page.bringToFront()
+  await expect.poll(async () => {
+    const rows = await setsOf(`${MARK} edit set`)
+    return rows.length === 1 ? Number(rows[0]!.weight_kg) : null
+  }, { timeout: 20_000 }).toBe(55)
+  const [corrected] = await setsOf(`${MARK} edit set`)
+  expect(corrected!.reps).toBe(8)
+  expect(Number(corrected!.volume_kg)).toBe(440)
+})
+
 test('the session strip counts volume from eligible sets only (AC-2.4)', async ({ page }) => {
   await startSession(page, 'Day 3 Legs', `${MARK} legs`)
 
   await page.getByLabel(/KG for set 1 of Leg Press/).fill('100')
   await page.getByLabel(/Reps for set 1 of Leg Press/).fill('10')
   await page.getByRole('checkbox', { name: /Save set 1 of Leg Press/ }).click()
-  await expect(page.getByRole('checkbox', { name: /Set 1 of .* saved/ }).first()).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: /Unsave set 1 of .*/ }).first()).toBeVisible()
 
   // A plank has no weight input at all — only seconds.
   await expect(page.getByLabel(/Seconds for set 1 of Plank/)).toBeVisible()
@@ -156,7 +184,7 @@ test('AC-2.1 — a set locks in under 200 ms with no signal', async ({ page, con
    * transaction and a re-render from Dexie, with nothing awaited on the network.
    */
   type Probe = Window & { __commitMs?: number }
-  const SAVED = '[aria-label$=" saved"]'
+  const SAVED = '[aria-label^="Unsave set "]'
   await page.evaluate((sel) => {
     const w = window as Probe
     let t0 = 0
@@ -173,7 +201,7 @@ test('AC-2.1 — a set locks in under 200 ms with no signal', async ({ page, con
   await expect(page.locator(SAVED)).toHaveCount(0)
 
   await page.getByRole('checkbox', { name: /Save set 1 of Shoulder Press Machine/ }).click()
-  await page.getByRole('checkbox', { name: /Set 1 of .* saved/ }).waitFor()
+  await page.getByRole('checkbox', { name: /Unsave set 1 of .*/ }).waitFor()
 
   const elapsed = await page.evaluate(() => (window as Probe).__commitMs ?? -1)
   expect(elapsed).toBeGreaterThan(0)
@@ -194,11 +222,11 @@ test('AC-2.9 — sets logged offline hold in the queue and sync exactly once', a
   // Pull-Ups are bodyweight: reps alone is a complete set.
   await page.getByLabel(/Reps for set 1 of Pull-Ups/).fill('8')
   await page.getByRole('checkbox', { name: /Save set 1 of Pull-Ups/ }).click()
-  await page.getByRole('checkbox', { name: /Set 1 of Pull-Ups saved/ }).waitFor()
+  await page.getByRole('checkbox', { name: /Unsave set 1 of Pull-Ups/ }).waitFor()
 
   await page.getByLabel(/Reps for set 2 of Pull-Ups/).fill('7')
   await page.getByRole('checkbox', { name: /Save set 2 of Pull-Ups/ }).click()
-  await expect(page.getByRole('checkbox', { name: /Set 2 of Pull-Ups saved/ })).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: /Unsave set 2 of Pull-Ups/ })).toBeVisible()
 
   // Both are on screen and locked, and NEITHER has reached Postgres — the queue is
   // holding them.
@@ -243,7 +271,7 @@ test.fixme('AC-2.9 — reopening the app offline restores the logged sets', asyn
   await page.getByLabel(/Reps for set 1 of Pull-Ups/).fill('8')
   await page.getByRole('checkbox', { name: /Save set 1 of Pull-Ups/ }).click()
   await page.reload()
-  await expect(page.getByRole('checkbox', { name: /Set 1 of .* saved/ })).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: /Unsave set 1 of .*/ })).toBeVisible()
 })
 
 test('ADD SET appends and carries the weight forward', async ({ page }) => {
@@ -252,7 +280,7 @@ test('ADD SET appends and carries the weight forward', async ({ page }) => {
   await page.getByLabel(/KG for set 1 of Shoulder Press Machine/).fill('55')
   await page.getByLabel(/Reps for set 1 of Shoulder Press Machine/).fill('10')
   await page.getByRole('checkbox', { name: /Save set 1 of Shoulder Press Machine/ }).click()
-  await page.getByRole('checkbox', { name: /Set 1 of .* saved/ }).waitFor()
+  await page.getByRole('checkbox', { name: /Unsave set 1 of .*/ }).waitFor()
 
   // The next row is offered pre-filled with the same load — the common case.
   await expect(page.getByLabel(/KG for set 2 of Shoulder Press Machine/)).toHaveValue('55')

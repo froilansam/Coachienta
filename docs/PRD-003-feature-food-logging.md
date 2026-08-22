@@ -608,7 +608,7 @@ That is exactly the dishonest precision §10 forbids: it spends the user's trust
 | `medium` | `EST` | warn |
 | `low` | `UNVERIFIED` | warn |
 
-### 5.3 Trends (`/trends`, nutrition section)
+### 5.3 Trends (`/trends`, nutrition section) — shipped
 
 | Chart | Spec |
 |---|---|
@@ -618,10 +618,14 @@ That is exactly the dishonest precision §10 forbids: it spends the user's trust
 | Adherence grid | Calendar heat grid — logged / on-target / missed. The honest picture. |
 | Data-quality strip | % of entries by confidence. Makes "am I actually measuring or guessing?" visible. |
 
-Aggregates come from **SQL, not client-side reduce** — same query functions the coach's tools use (PRD-005), so a chart and the coach can never disagree.
+Aggregates come from **SQL, not client-side reduce** — same query functions the coach's tools use (PRD-005), so a chart and the coach can never disagree. `/trends` segments **Food | Train**; the range control is shared.
 
 > Load the `dataviz` skill before implementing any chart (PRD-001 T6).
 
+| AC | Criterion | State |
+|---|---|---|
+| AC-1.30 | Food trends: kcal band, protein streak/tick bars, macro split, adherence grid, confidence strip — all from coach SQL | ✅ unit + UI |
+| AC-1.31 | Photo: camera **and** library upload both reach the same resolve-photo pipeline | ✅ |
 ---
 
 ## 6. Acceptance criteria
@@ -648,6 +652,8 @@ Aggregates come from **SQL, not client-side reduce** — same query functions th
 | AC-1.18 | A label whose printed energy sits inside the range its printed macros allow — after legal rounding — is graded `high` and shows no warning. One outside the range is graded `low` and says which numbers disagree. |
 | AC-1.19 | A label with no printed weight for its basis is stored per piece. No density is ever inferred. |
 | AC-1.20 | Label review commits nothing on its own. Same rule as AC-1.9, same single commit path. |
+| AC-1.30 | `/trends` Food: kcal vs band, protein streak + tick bars, macro split, adherence grid, confidence strip — from coach SQL. |
+| AC-1.31 | Log food offers camera **and** library upload; both use the same resolve-photo pipeline. |
 | AC-1.21 | The product name and brand are editable before the row is created, and the row is stored under the approved name — so searching that name later finds it. An empty name cannot be saved. |
 | AC-1.22 | Editing a scanned name to match an existing library row updates that row rather than creating a second one. |
 | AC-1.23 | The library lists every food with live counts per filter, and `UNUSED` shows only rows no log entry references. |

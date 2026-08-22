@@ -68,7 +68,7 @@ async function logSet(
   await page.getByLabel(new RegExp(`KG for set 1 of ${exercise}`)).fill(weight)
   await page.getByLabel(new RegExp(`Reps for set 1 of ${exercise}`)).fill(reps)
   await page.getByRole('checkbox', { name: new RegExp(`Save set 1 of ${exercise}`) }).click()
-  await page.getByRole('checkbox', { name: new RegExp(`Set 1 of ${exercise} saved`) }).waitFor()
+  await page.getByRole('checkbox', { name: new RegExp(`Unsave set 1 of ${exercise}`) }).waitFor()
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +186,19 @@ async function seedHistory() {
 
 test.describe('trends', () => {
   test.beforeEach(seedHistory)
+
+  test('Food | Train segments — food charts from the same range', async ({ page }) => {
+    await page.goto(`/trends?k=${TOKEN}`)
+    await page.getByRole('heading', { name: 'Trends', exact: true }).waitFor()
+    await page.getByRole('radio', { name: 'Food' }).click()
+    // Either the five-chart section or the honest empty — never a train chart left behind.
+    await expect(page.getByRole('heading', { name: 'Volume by muscle group' })).toHaveCount(0)
+    const foodHeading = page.getByRole('heading', { name: 'Calories vs target' })
+    const empty = page.getByRole('heading', { name: 'NO FOOD LOGGED YET' })
+    await expect(foodHeading.or(empty)).toBeVisible()
+    await page.getByRole('radio', { name: 'Train' }).click()
+    await expect(page.getByRole('heading', { name: 'Volume by muscle group' })).toBeVisible()
+  })
 
   test('AC-2.14 — the per-muscle parts add up, and no leak is reported', async ({ page }) => {
     await page.goto(`/trends?k=${TOKEN}`)

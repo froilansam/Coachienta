@@ -16,7 +16,7 @@ import { NewFoodSheet } from './NewFoodSheet'
 import { PhotoCaptureButton } from './PhotoCaptureButton'
 
 /**
- * The two ways in: type it or shoot it. Both land on the same result rows.
+ * The ways in: type it, shoot it, or upload it. All land on the same result rows.
  *
  * Takes the hooks whole rather than 15 props — they are already the tested,
  * typed surface, and spreading them here would only hide where state lives.
@@ -51,16 +51,14 @@ export function FoodSearchPanel({
 
   return (
     <div className="flex flex-col gap-3 pb-2">
-      <div className="flex items-end gap-2">
-        <div className="flex-1">
-          <SearchField
-            label="Search foods"
-            value={search.query}
-            onChange={search.setQuery}
-            placeholder="e.g. 200g white rice"
-            autoFocus
-          />
-        </div>
+      <div className="flex flex-col gap-2">
+        <SearchField
+          label="Search foods"
+          value={search.query}
+          onChange={search.setQuery}
+          placeholder="e.g. 200g white rice"
+          autoFocus
+        />
         <PhotoCaptureButton onFile={photo.capture} loading={busy} />
       </div>
 

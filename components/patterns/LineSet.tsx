@@ -26,6 +26,12 @@ export interface Line {
   points: readonly LinePoint[]
 }
 
+/** A vertical hairline on the date axis — e.g. the day a gym line begins. */
+export interface AxisMarker {
+  on: string
+  label: string
+}
+
 const W = 320
 const H = 84
 const PAD = 4
@@ -43,12 +49,14 @@ export function LineSet({
   /** Assisted work improves DOWNWARD; the caption has to say so or the chart lies. */
   betterIsDown = false,
   emptyLabel = 'Not enough history to draw a line.',
+  markers = [],
 }: {
   lines: readonly Line[]
   unit: string
   decimals?: number
   betterIsDown?: boolean
   emptyLabel?: string
+  markers?: readonly AxisMarker[]
 }) {
   const all = lines.flatMap((l) => [...l.points])
   if (all.length === 0) return <Text variant="micro">{emptyLabel}</Text>
@@ -80,6 +88,22 @@ export function LineSet({
         role="img"
         aria-label={`${lines.length} series, ${all.length} readings from ${first.label} on ${first.on} to ${last.label} on ${last.on}. ${unit}, ${direction}.`}
       >
+        {markers.map((m) => (
+          <g key={`${m.on}-${m.label}`}>
+            <line
+              x1={x(m.on)}
+              x2={x(m.on)}
+              y1={PAD}
+              y2={H - PAD}
+              stroke="currentColor"
+              strokeWidth={1}
+              strokeDasharray="2 3"
+              className="text-ink-3"
+              vectorEffect="non-scaling-stroke"
+            />
+            <title>{`${m.label} from ${m.on}`}</title>
+          </g>
+        ))}
         {lines.map((line, i) => {
           const pts = [...line.points].sort((a, b) => a.on.localeCompare(b.on))
           if (pts.length === 0) return null
@@ -112,6 +136,13 @@ export function LineSet({
               <span aria-hidden className={cn(strokeOf(i), 'h-px w-3 bg-current')} />
               <Text variant="micro" tone="secondary">
                 {line.label}
+              </Text>
+            </li>
+          ))}
+          {markers.map((m) => (
+            <li key={`m-${m.on}-${m.label}`}>
+              <Text variant="micro" tone="tertiary">
+                {`┊ ${m.label}`}
               </Text>
             </li>
           ))}
