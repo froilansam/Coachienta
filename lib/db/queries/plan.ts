@@ -166,6 +166,8 @@ export interface LoggedSet {
   side: string | null
   is_pr: boolean
   pr_kinds: string[]
+  /** Null on rows written before per-position PRs — those were all-time by definition. */
+  pr_scope: string | null
   volume_kg: number | null
 }
 
@@ -185,6 +187,11 @@ export async function getSessionSets(sessionId: string): Promise<LoggedSet[]> {
  * Prior working sets at this gym, grouped by exercise — the evidence PR detection
  * compares against. Sent with the session so the verdict can be computed on the
  * client at commit time with no round trip (§4.3).
+ *
+ * Each row carries the POSITION it held (`set_ordinal`, ranked over working sets
+ * only), because a record is judged set 1 against set 1 and set 3 against set 3. The
+ * whole record is sent, not a recent window: "your best set 3 ever" cannot be
+ * answered from the last few sessions.
  */
 export async function priorSetsByExercise(
   gymId: string,
@@ -201,6 +208,8 @@ export async function priorSetsByExercise(
     const list = out[r.exercise_id] ?? (out[r.exercise_id] = [])
     list.push({
       performed_on: r.performed_on,
+      set_ordinal: Number(r.set_ordinal),
+      side: r.side,
       weight_kg: r.weight_kg === null ? null : Number(r.weight_kg),
       reps: r.reps,
       duration_sec: r.duration_sec,

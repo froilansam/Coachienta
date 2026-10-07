@@ -10,8 +10,10 @@ import type { Dot, Lane } from '@/components/patterns/DotPlot'
 import type { GridRow } from '@/components/patterns/WeekGrid'
 import { labelOf } from '@/lib/domain/coach/priorities'
 import { todayLocal } from '@/lib/domain/date'
+import type { Metric } from '@/components/patterns/MetricStrip'
 import {
   foodCalendar,
+  foodWeeklyAverage,
   kcalSeries,
   macroSplit,
   proteinBars,
@@ -33,6 +35,7 @@ import {
   PR_KIND_LABEL,
   rampOrder,
   stackByWeek,
+  weeklyAverage,
   weekLabel,
   type AdherenceRow,
   type CalendarWeek,
@@ -94,6 +97,10 @@ export interface TrendsView {
   adherenceRows: AdherenceRow[]
   adherenceNote: string | null
 
+  /** `SESSIONS 3.2  VOLUME 12,400 kg  SETS 58` — a normal week, averaged. */
+  trainWeeklyMetrics: Metric[]
+  trainWeeklyNote: string
+
   // -- food -----------------------------------------------------------------
   foodEmpty: boolean
   kcalPoints: BandPoint[]
@@ -106,6 +113,9 @@ export interface TrendsView {
   quality: QualitySlice[]
   qualityNote: string
   averagesCaption: string
+  /** `DAYS LOGGED 5.4  KCAL 2,140  PROTEIN 148 g` — a normal week, averaged. */
+  foodWeeklyMetrics: Metric[]
+  foodWeeklyNote: string
 }
 
 const WEEKDAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
@@ -199,17 +209,59 @@ export function useTrends(): TrendsView {
         key: `${pr.performed_on}-${pr.exercise_name}-${i}`,
         on: pr.performed_on,
         lane: leadKind(pr.pr_kinds),
-        emphasis: pr.pr_kinds.includes('weight'),
-        label:
-          pr.weight_kg === null
-            ? pr.exercise_name
-            : `${pr.exercise_name} · ${pr.weight_kg} kg × ${pr.reps ?? 0}`,
+        /**
+         * Emphasis marks an ALL-TIME record now, not a weight one. Records are judged
+         * per set position, so four can land in a session and the timeline needs to
+         * say which one was the best of any set — otherwise it is the spreadsheet's
+         * `PR Flag` column again: a mark on everything, meaning nothing.
+         */
+        emphasis: pr.pr_scope === 'all_time',
+        label: [
+          pr.exercise_name,
+          `set ${pr.set_ordinal}`,
+          pr.weight_kg === null ? null : `${pr.weight_kg} kg × ${pr.reps ?? 0}`,
+        ]
+          .filter(Boolean)
+          .join(' · '),
       })),
     [data],
   )
   const prLanes = useMemo<Lane[]>(
     () => Object.entries(PR_KIND_LABEL).map(([key, label]) => ({ key, label })),
     [],
+  )
+
+  // -- weekly average -------------------------------------------------------
+  /**
+   * The range is the window; the average is taken over the COMPLETE weeks inside it
+   * that follow your first logged one. `weeklyAverage` returns that week count so the
+   * note can say what it divided by — an average whose denominator is invisible is
+   * how the spreadsheet's dashboard stayed wrong for months.
+   */
+  const trainWeek = useMemo(
+    () => weeklyAverage(sessions, today, Number(range)),
+    [sessions, today, range],
+  )
+  const trainWeeklyMetrics = useMemo<Metric[]>(
+    () => [
+      { label: 'SESSIONS', value: trainWeek.sessions },
+      { label: 'VOLUME', value: trainWeek.volumeKg, unit: 'kg' },
+      { label: 'SETS', value: trainWeek.sets },
+    ],
+    [trainWeek],
+  )
+
+  const foodWeek = useMemo(
+    () => foodWeeklyAverage(nutritionDays, today, Number(range)),
+    [nutritionDays, today, range],
+  )
+  const foodWeeklyMetrics = useMemo<Metric[]>(
+    () => [
+      { label: 'DAYS LOGGED', value: foodWeek.daysLogged },
+      { label: 'KCAL', value: foodWeek.kcal },
+      { label: 'PROTEIN', value: foodWeek.proteinG, unit: 'g' },
+    ],
+    [foodWeek],
   )
 
   // -- frequency ------------------------------------------------------------
@@ -383,6 +435,13 @@ export function useTrends(): TrendsView {
     adherenceRows,
     adherenceNote: adherenceSummary(adherenceRows),
 
+    trainWeeklyMetrics,
+    trainWeeklyNote: weeklyNote(
+      trainWeek.weeks,
+      'Blank weeks count — a skipped week is part of an average, and leaving it out would report a personal best instead.',
+    ),
+
+
     foodEmpty: nutritionDays.length === 0,
     kcalPoints,
     proteinTickBars,
@@ -399,5 +458,21 @@ export function useTrends(): TrendsView {
     averagesCaption: avg
       ? `Across ${avg.logged_days} logged day${avg.logged_days === 1 ? '' : 's'} · mean ${Math.round(avg.kcal_mean)} kcal · protein ${avg.protein_mean} g`
       : 'No averages yet.',
+    foodWeeklyMetrics,
+    foodWeeklyNote: weeklyNote(
+      foodWeek.weeks,
+      'Calories and protein are per LOGGED day — an unlogged day is missing data, not a day of eating nothing.',
+    ),
   }
+}
+
+/**
+ * `Averaged over 9 complete weeks. This week is excluded — it is not over.`
+ *
+ * States the denominator and the one exclusion that would otherwise look like a
+ * slump every Monday.
+ */
+function weeklyNote(weeks: number, extra: string): string {
+  if (weeks === 0) return 'Not a full week on record yet — an average needs a finished week.'
+  return `Averaged over ${weeks} complete week${weeks === 1 ? '' : 's'}; this week is excluded because it is not over. ${extra}`
 }

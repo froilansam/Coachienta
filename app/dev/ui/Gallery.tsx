@@ -385,9 +385,11 @@ export function Gallery() {
             Replay PR stamp
           </Button>
           <PrStamp stampKey={pr} />
+          <PrStamp scope="set" stampKey={pr} />
         </div>
         <Text variant="micro">
           A mechanical press, not confetti. No streaks, no badges, no celebratory sound.
+          Two ranks: best of any set, and best this set position has produced.
         </Text>
       </Block>
 

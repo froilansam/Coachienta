@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   blankSet, formatDuration, inputsFor, isComplete, nextSetIndex,
-  prevLabel, setLabel, totals, type SetRow,
+  prevAtPosition, recordAtPosition, setLabel, setOrdinal, totals, type SetRow,
 } from './session'
-import type { History } from './progression'
+import type { PriorSet } from './detectPr'
 
 const row = (o: Partial<SetRow> = {}): SetRow => ({
   id: 'r', exercise_id: 'e1', position: 1, set_index: 1, kind: 'working',
@@ -146,22 +146,113 @@ describe('formatDuration', () => {
   })
 })
 
-describe('prevLabel (US-2.4)', () => {
-  const h: History = {
-    last_performed_on: '2026-06-09', last_weight_kg: 10, last_reps: 13,
-    last_duration_sec: null, best_weight_kg: 12.5, best_reps: 10,
-    best_on: '2026-04-30', sessions_since: 0,
-  }
-
-  it('is never blank — an em dash with no history at this gym', () => {
-    expect(prevLabel(null, 'external_weight', 1)).toBe('—')
+// ---------------------------------------------------------------------------
+// Set positions — what a PR is judged at, and what PREV shows
+// ---------------------------------------------------------------------------
+describe('setOrdinal', () => {
+  it('numbers the working sets, skipping the warmups between them', () => {
+    /**
+     * The whole reason this is not `set_index`. Warmups occupy an index — the unique
+     * constraint requires it — so a day with a warmup would otherwise call its first
+     * working set "set 2" and grade it against a different set entirely.
+     */
+    const rows = [
+      row({ id: 'w', set_index: 1, kind: 'warmup' }),
+      row({ id: 'a', set_index: 2 }),
+      row({ id: 'b', set_index: 3 }),
+    ]
+    expect(setOrdinal(rows[1]!, rows)).toBe(1)
+    expect(setOrdinal(rows[2]!, rows)).toBe(2)
   })
 
-  it('shows the last top set without its date, which the column has no room for', () => {
-    expect(prevLabel(h, 'external_weight', 1)).toBe('10 kg × 13')
+  it('gives a warmup no position at all', () => {
+    const rows = [row({ id: 'w', set_index: 1, kind: 'warmup' })]
+    expect(setOrdinal(rows[0]!, rows)).toBe(0)
+  })
+
+  it('numbers each side independently', () => {
+    const rows = [
+      row({ id: 'l1', set_index: 1, side: 'left' }),
+      row({ id: 'r1', set_index: 1, side: 'right' }),
+      row({ id: 'l2', set_index: 2, side: 'left' }),
+    ]
+    expect(setOrdinal(rows[1]!, rows)).toBe(1)
+    expect(setOrdinal(rows[2]!, rows)).toBe(2)
+  })
+
+  it('does not depend on the order sets were committed in', () => {
+    // Committing set 2 before set 1 must not renumber set 2 as set 1.
+    const rows = [row({ id: 'a', set_index: 1 }), row({ id: 'b', set_index: 2 })]
+    expect(setOrdinal(rows[1]!, rows)).toBe(2)
+  })
+})
+
+describe('prevAtPosition (US-2.4)', () => {
+  const p = (o: Partial<PriorSet> = {}): PriorSet => ({
+    performed_on: '2026-06-09', set_ordinal: 1, side: null,
+    weight_kg: 10, reps: 13, duration_sec: null, ...o,
+  })
+
+  it('is never blank — an em dash when this position has no history', () => {
+    expect(prevAtPosition([], 'external_weight', 1, null)).toBe('—')
+  })
+
+  it('shows the value without its date, which the column has no room for', () => {
+    expect(prevAtPosition([p()], 'external_weight', 1, null)).toBe('10 kg × 13')
+  })
+
+  it('shows THIS set, not the exercise top set', () => {
+    /**
+     * The change that makes back-off progress visible: set 3 chases set 3. Pointing
+     * every row at set 1's number gave the later sets a target they were never meant
+     * to hit — the same reason their progress never counted as a record.
+     */
+    const priors = [
+      p({ set_ordinal: 1, weight_kg: 80, reps: 8 }),
+      p({ set_ordinal: 3, weight_kg: 60, reps: 8 }),
+    ]
+    expect(prevAtPosition(priors, 'external_weight', 3, null)).toBe('60 kg × 8')
+  })
+
+  it('takes the most recent one at that position', () => {
+    const priors = [
+      p({ performed_on: '2026-06-01', weight_kg: 60, reps: 8 }),
+      p({ performed_on: '2026-07-01', weight_kg: 65, reps: 8 }),
+    ]
+    expect(prevAtPosition(priors, 'external_weight', 1, null)).toBe('65 kg × 8')
   })
 
   it('shows seconds for duration work', () => {
-    expect(prevLabel({ ...h, last_duration_sec: 45 }, 'duration', 1)).toBe('45 s')
+    expect(prevAtPosition([p({ duration_sec: 45 })], 'duration', 1, null)).toBe('45 s')
+  })
+
+  it('drops the load for unweighted bodyweight, where `0 kg × 10` reads as broken', () => {
+    expect(prevAtPosition([p({ weight_kg: 0, reps: 10 })], 'bodyweight', 1, null)).toBe('10 reps')
+  })
+
+  it('does not cross sides', () => {
+    expect(prevAtPosition([p({ side: 'left' })], 'external_weight', 1, 'right')).toBe('—')
+  })
+})
+
+describe('recordAtPosition', () => {
+  const p = (o: Partial<PriorSet> = {}): PriorSet => ({
+    performed_on: '2026-06-09', set_ordinal: 1, side: null,
+    weight_kg: 10, reps: 13, duration_sec: null, ...o,
+  })
+
+  it('is null, not a dash, before a record exists — PREV already says so', () => {
+    expect(recordAtPosition([], 'external_weight', 1, null)).toBeNull()
+  })
+
+  it('shows the best ever while PREV shows the last session', () => {
+    const priors = [p({ performed_on: '2026-06-01', weight_kg: 65, reps: 8 }), p({ performed_on: '2026-06-08', weight_kg: 60, reps: 8 })]
+    expect(recordAtPosition(priors, 'external_weight', 1, null)).toBe('65 kg × 8')
+    expect(prevAtPosition(priors, 'external_weight', 1, null)).toBe('60 kg × 8')
+  })
+
+  it('formats like PREV for bodyweight and duration', () => {
+    expect(recordAtPosition([p({ weight_kg: 0, reps: 12 })], 'bodyweight', 1, null)).toBe('12 reps')
+    expect(recordAtPosition([p({ weight_kg: null, reps: null, duration_sec: 60 })], 'duration', 1, null)).toBe('60 s')
   })
 })

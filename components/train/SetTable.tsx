@@ -5,7 +5,7 @@ import { Checkbox } from '@/components/ui/Checkbox'
 import { NumericInput } from '@/components/ui/NumericInput'
 import { Text } from '@/components/ui/Text'
 import type { ExerciseBlock, SessionState } from '@/hooks/useSession'
-import { describeKinds } from '@/lib/domain/train/detectPr'
+import { describeVerdict } from '@/lib/domain/train/detectPr'
 import { isComplete, type SetRow } from '@/lib/domain/train/session'
 
 /**
@@ -19,7 +19,8 @@ import { isComplete, type SetRow } from '@/lib/domain/train/session'
  * Unchecking unlocks the row again (same checkbox, Hevy). Values stay; a re-tick
  * upserts the same id.
  *
- * `PREV` is never hidden. `—` when there is no history at this gym (US-2.4).
+ * `PREV` is never hidden. `—` when there is no history at this gym (US-2.4). Under it,
+ * the record standing at that position: constant across sessions until a set beats it.
  */
 export function SetTable({ block, vm }: { block: ExerciseBlock; vm: SessionState }) {
   const { inputs, exercise } = block
@@ -54,8 +55,17 @@ export function SetTable({ block, vm }: { block: ExerciseBlock; vm: SessionState
       header: 'PREV',
       render: (row) => {
         const i = block.rows.indexOf(row)
+        const record = block.record[i] ?? null
+        // Stacked, not a column: a seventh column does not fit a phone's width.
         return (
-          <span className="tabular font-mono text-2xs text-ink-3">{block.prev[i] ?? '—'}</span>
+          <span className="flex flex-col">
+            <span className="tabular font-mono text-2xs text-ink-3">{block.prev[i] ?? '—'}</span>
+            {record !== null && (
+              <span className="tabular whitespace-nowrap font-mono text-2xs text-accent">
+                PR {record}
+              </span>
+            )}
+          </span>
         )
       },
     },
@@ -105,8 +115,8 @@ export function SetTable({ block, vm }: { block: ExerciseBlock; vm: SessionState
       const pr = vm.prs[row.id]
       if (!pr?.isPr) return null
       return (
-        <span title={pr.basis ?? undefined} aria-label={`Personal record: ${describeKinds(pr.kinds)}`}>
-          <PrStamp stampKey={row.id} />
+        <span title={pr.basis ?? undefined} aria-label={describeVerdict(pr)}>
+          <PrStamp scope={pr.scope ?? 'all_time'} stampKey={row.id} />
         </span>
       )
     },

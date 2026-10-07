@@ -1,4 +1,5 @@
 import { labelOf as muscleLabel } from '@/lib/domain/coach/priorities'
+import { addDays, mondayOf } from '@/lib/domain/date'
 import type { MuscleWeek, SessionSummary, ShareRow, TopSet, TotalWeek } from '@/lib/db/queries/trends'
 
 /**
@@ -293,18 +294,12 @@ export function calendar(
   return out
 }
 
-/** ISO date of the Monday on or before `iso`. */
-export function mondayOf(iso: string): string {
-  const d = new Date(`${iso}T00:00:00`)
-  const shift = (d.getDay() + 6) % 7
-  return addDays(iso, -shift)
-}
-
-export function addDays(iso: string, n: number): string {
-  const d = new Date(`${iso}T00:00:00`)
-  d.setDate(d.getDate() + n)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
+/**
+ * Re-exported so this module keeps one vocabulary for dates. The implementations
+ * used to live here and duplicated `lib/domain/date.ts` — including a `new
+ * Date('…T00:00:00')` parse that the date module exists specifically to avoid.
+ */
+export { addDays, mondayOf }
 
 /** `3 of the last 12 weeks hit 4 sessions.` — the honest headline. */
 export const frequencySummary = (weeks: readonly CalendarWeek[]): string => {
@@ -312,6 +307,59 @@ export const frequencySummary = (weeks: readonly CalendarWeek[]): string => {
   const hit = past.filter((w) => w.onTarget).length
   const avg = past.length === 0 ? 0 : past.reduce((n, w) => n + w.sessions, 0) / past.length
   return `${hit} of ${past.length} weeks hit ${WEEKLY_TARGET} · ${avg.toFixed(1)} a week on average`
+}
+
+// ---------------------------------------------------------------------------
+// Weekly average
+// ---------------------------------------------------------------------------
+/**
+ * What a normal training week looks like, in the numbers a week is judged by.
+ *
+ * Three decisions, all in the direction of not flattering the number:
+ *
+ * 1. **The current week is excluded.** It is not over. Averaging Tuesday's two
+ *    sessions in as a whole week drags every figure down for five days out of seven.
+ * 2. **It starts at your first logged week**, not at the start of the range. A 24-week
+ *    window over 6 weeks of history would otherwise report a quarter of the truth.
+ * 3. **Skipped weeks in between still count as zero**, because they happened. That is
+ *    the difference between an average and a personal best.
+ *
+ * `weeks` is returned so the caller can state what it averaged over — a figure whose
+ * denominator is invisible is the spreadsheet's "Next Session Targets" tab again.
+ */
+export interface WeeklyAverage {
+  weeks: number
+  sessions: number
+  volumeKg: number
+  sets: number
+}
+
+export function weeklyAverage(
+  sessions: readonly SessionSummary[],
+  today: string,
+  rangeDays: number,
+): WeeklyAverage {
+  const none: WeeklyAverage = { weeks: 0, sessions: 0, volumeKg: 0, sets: 0 }
+  const from = mondayOf(addDays(today, -rangeDays + 1))
+  const lastWeekStart = addDays(mondayOf(today), -7)
+  const until = addDays(lastWeekStart, 6)
+
+  const inRange = sessions.filter((s) => s.performed_on >= from && s.performed_on <= until)
+  if (inRange.length === 0) return none
+
+  const earliest = inRange.reduce((m, s) => (s.performed_on < m ? s.performed_on : m), until)
+  let weeks = 0
+  for (let w = mondayOf(earliest); w <= lastWeekStart; w = addDays(w, 7)) weeks += 1
+  if (weeks === 0) return none
+
+  const volume = inRange.reduce((n, s) => n + s.volume_kg, 0)
+  const sets = inRange.reduce((n, s) => n + s.set_count, 0)
+  return {
+    weeks,
+    sessions: Math.round((inRange.length / weeks) * 10) / 10,
+    volumeKg: Math.round(volume / weeks),
+    sets: Math.round((sets / weeks) * 10) / 10,
+  }
 }
 
 // ---------------------------------------------------------------------------

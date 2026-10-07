@@ -30,6 +30,7 @@ test.afterAll(closeDb)
 interface SetRow {
   is_pr: boolean
   pr_kinds: string[]
+  pr_scope: string | null
   weight_kg: string | null
   reps: number | null
 }
@@ -37,13 +38,38 @@ interface SetRow {
 const setsOf = (name: string) =>
   withDb(async (c) => {
     const r = await c.query<SetRow>(
-      `select s.is_pr, s.pr_kinds, s.weight_kg, s.reps
+      `select s.is_pr, s.pr_kinds, s.pr_scope, s.weight_kg, s.reps
        from workout_sets s join workout_sessions w on w.id = s.session_id
        where w.name = $1 order by s.position, s.set_index`,
       [name],
     )
     return r.rows
   })
+
+/** Either rank of stamp. `Personal record:` is not a prefix any more. */
+const anyStamp = (page: import('@playwright/test').Page) => page.getByLabel(/record: /)
+
+/**
+ * Wait for queued sets to reach Postgres, kicking the queue on every attempt.
+ *
+ * A local-first write needs a flush TRIGGER, not a longer timeout. `flush()` self-
+ * guards with a `running` flag, so a second set committed while the first is still
+ * uploading finds the door shut and waits for the next foreground event — which may
+ * never arrive inside a test. `online` is one of the three the app listens for
+ * (`lib/offline/sync.ts`), and dispatching it is deterministic where tab focus is not.
+ */
+async function expectSets(
+  page: import('@playwright/test').Page,
+  name: string,
+  count: number,
+): Promise<void> {
+  await expect
+    .poll(async () => {
+      await page.evaluate(() => window.dispatchEvent(new Event('online')))
+      return (await setsOf(name)).length
+    })
+    .toBe(count)
+}
 
 async function startSession(
   page: import('@playwright/test').Page,
@@ -64,11 +90,12 @@ async function logSet(
   exercise: string,
   weight: string,
   reps: string,
+  index = 1,
 ) {
-  await page.getByLabel(new RegExp(`KG for set 1 of ${exercise}`)).fill(weight)
-  await page.getByLabel(new RegExp(`Reps for set 1 of ${exercise}`)).fill(reps)
-  await page.getByRole('checkbox', { name: new RegExp(`Save set 1 of ${exercise}`) }).click()
-  await page.getByRole('checkbox', { name: new RegExp(`Unsave set 1 of ${exercise}`) }).waitFor()
+  await page.getByLabel(new RegExp(`KG for set ${index} of ${exercise}`)).fill(weight)
+  await page.getByLabel(new RegExp(`Reps for set ${index} of ${exercise}`)).fill(reps)
+  await page.getByRole('checkbox', { name: new RegExp(`Save set ${index} of ${exercise}`) }).click()
+  await page.getByRole('checkbox', { name: new RegExp(`Unsave set ${index} of ${exercise}`) }).waitFor()
 }
 
 // ---------------------------------------------------------------------------
@@ -86,7 +113,7 @@ test('AC-2.5 — the first set at a gym is a baseline, not a record', async ({ p
   expect(row!.is_pr).toBe(false)
   expect(row!.pr_kinds).toEqual(['first_time'])
   // Nothing is stamped, either.
-  await expect(page.getByLabel(/^Personal record/)).toHaveCount(0)
+  await expect(anyStamp(page)).toHaveCount(0)
 })
 
 test('beating a previous set stamps PR and stores what was beaten', async ({ page }) => {
@@ -100,9 +127,10 @@ test('beating a previous set stamps PR and stores what was beaten', async ({ pag
   await logSet(page, 'Shoulder Press Machine', '65', '8')
 
   // Stamped with no round trip — the verdict was decided on the client at commit.
-  const stamp = page.getByLabel(/^Personal record/)
+  const stamp = anyStamp(page)
   await expect(stamp).toBeVisible()
-  await expect(stamp).toHaveAttribute('aria-label', /New weight/)
+  // Nothing else on record, so beating set 1 is also beating everything.
+  await expect(stamp).toHaveAttribute('aria-label', /All-time record: .*New weight/)
   // And it names its evidence, the same standard every suggestion is held to (AC-2.8).
   await expect(stamp).toHaveAttribute('title', /65 kg × 8 beats 60 kg × 8/)
 
@@ -110,6 +138,45 @@ test('beating a previous set stamps PR and stores what was beaten', async ({ pag
   const [row] = await setsOf(`${MARK} beat`)
   expect(row!.is_pr).toBe(true)
   expect(row!.pr_kinds).toContain('weight')
+  expect(row!.pr_scope).toBe('all_time')
+})
+
+test('a record is judged per SET POSITION, not against the top set', async ({ page }) => {
+  /**
+   * The claim the whole rule exists for, and it can only be proved against real
+   * Postgres because `prior_sets` is what supplies the positions.
+   *
+   * Set 2 goes 50 → 55 kg. That is progressive overload and it is a record. It is also
+   * 5 kg under the 60 kg sitting at set 1, so the old pooled comparison called it
+   * nothing at all — which is why every back-off set in the history is unmarked.
+   */
+  await startSession(page, 'Day 1 Push', `${MARK} ramp base`)
+  await logSet(page, 'Shoulder Press Machine', '60', '8')
+  await logSet(page, 'Shoulder Press Machine', '50', '8', 2)
+  // Both must be uploaded before the next session opens: `prior_sets` is a server
+  // read, so a set still sitting in IndexedDB is a set the comparison cannot see.
+  await expectSets(page, `${MARK} ramp base`, 2)
+
+  await startSession(page, 'Day 1 Push', `${MARK} ramp beat`)
+  await logSet(page, 'Shoulder Press Machine', '60', '8')
+  await logSet(page, 'Shoulder Press Machine', '55', '8', 2)
+
+  // Asserted before the upload: the verdict is decided on the client at commit, and
+  // it names its evidence the way every suggestion here has to (AC-2.8).
+  const stamp = anyStamp(page)
+  await expect(stamp).toHaveAttribute('aria-label', /Set 2 record: .*New weight/)
+  await expect(stamp).toHaveAttribute('title', /set 2: 55 kg × 8 beats 50 kg × 8/)
+
+  await expectSets(page, `${MARK} ramp beat`, 2)
+  const rows = await setsOf(`${MARK} ramp beat`)
+
+  // Set 1 equalled its own best. Equalling is not beating (AC-2.5's sibling rule).
+  expect(rows[0]!.is_pr).toBe(false)
+  // Set 2 beat every set 2 on record.
+  expect(rows[1]!.is_pr).toBe(true)
+  expect(rows[1]!.pr_kinds).toContain('weight')
+  // And it is honest about how far the claim reaches: 55 kg is not an all-time best.
+  expect(rows[1]!.pr_scope).toBe('set')
 })
 
 test('a warmup is never a PR, however heavy', async ({ page }) => {

@@ -31,6 +31,10 @@ export interface PrRow {
   exercise_name: string
   muscle_group: string
   pr_kinds: string[]
+  /** `all_time` (best of any set) or `set` (best at this position). */
+  pr_scope: string
+  /** The position it was judged at — rank among that day's working sets. */
+  set_ordinal: number
   weight_kg: number | null
   reps: number | null
 }
@@ -94,6 +98,7 @@ export async function trainingTrends(gymId: string, days = 84) {
     })),
     prs: ((prs.data ?? []) as PrRow[]).map((r) => ({
       ...r,
+      set_ordinal: Number(r.set_ordinal),
       weight_kg: r.weight_kg === null ? null : Number(r.weight_kg),
     })),
     tops: ((tops.data ?? []) as TopSet[]).map((r) => ({

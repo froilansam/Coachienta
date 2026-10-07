@@ -41,6 +41,14 @@ export const atLocalMidnight = (iso: string): Date => {
 export const isToday = (iso: string, today = todayLocal()): boolean => iso === today
 export const isFuture = (iso: string, today = todayLocal()): boolean => iso > today
 
+/**
+ * ISO date of the Monday on or before `iso`. Weeks start Monday everywhere here —
+ * `date_trunc('week', …)` in Postgres does the same, so the SQL rollups and these
+ * client-side ones cannot disagree about which week a Sunday belongs to.
+ */
+export const mondayOf = (iso: string): string =>
+  addDays(iso, -((atLocalMidnight(iso).getDay() + 6) % 7))
+
 /** `06 AUG · THU` — the instrument-panel form used across the app. */
 export function dayLabel(iso: string): string {
   const parts = atLocalMidnight(iso)

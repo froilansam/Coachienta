@@ -10,14 +10,23 @@ import {
   formatDuration,
   inputsFor,
   isComplete,
-  prevLabel,
+  isWorkingSet,
+  prevAtPosition,
+  recordAtPosition,
   setLabel,
+  setOrdinal,
   totals,
   type SetInputs,
   type SetRow,
   type Totals,
 } from '@/lib/domain/train/session'
-import { detectPr, type PrVerdict } from '@/lib/domain/train/detectPr'
+import {
+  detectPr,
+  type PrKind,
+  type PriorSet,
+  type PrScope,
+  type PrVerdict,
+} from '@/lib/domain/train/detectPr'
 import { suggestTarget, type Target } from '@/lib/domain/train/progression'
 import type { ExerciseLite } from '@/lib/db/queries/plan'
 import type { ExerciseListResponse } from '@/app/api/data/exercises/route'
@@ -39,6 +48,8 @@ export interface ExerciseBlock {
   rows: SetRow[]
   /** Per-row `PREV`, aligned by index. Always populated (US-2.4). */
   prev: string[]
+  /** Per-row standing record at that position, aligned by index. `null` before one exists. */
+  record: Array<string | null>
   target: Target
   targetSets: number | null
   repLow: number | null
@@ -111,6 +122,24 @@ export interface SessionState {
 
 const MIRROR_TABLE = 'workout_sets' as const
 
+/**
+ * This session's saved working sets, shaped like `prior_sets` rows. Numbered over the
+ * WHOLE block, drafts included, so a set saved out of order holds the same position
+ * here as the candidate being judged against it.
+ */
+function savedToday(block: readonly SetRow[], performedOn: string): PriorSet[] {
+  return block
+    .filter((r) => r.committed && isWorkingSet(r))
+    .map((r) => ({
+      performed_on: performedOn,
+      set_ordinal: setOrdinal(r, block),
+      side: r.side,
+      weight_kg: r.weight_kg,
+      reps: r.reps,
+      duration_sec: r.duration_sec,
+    }))
+}
+
 export function useSession(sessionId: string): SessionState {
   const qc = useQueryClient()
   const [drafts, setDrafts] = useState<Record<string, SetRow>>({})
@@ -128,7 +157,11 @@ export function useSession(sessionId: string): SessionState {
   const [restUntil, setRestUntil] = useState<{ at: number; position: number } | null>(null)
   const [restBy, setRestBy] = useState<Record<number, number>>({})
   const [flashKeys, setFlashKeys] = useState<Set<string>>(new Set())
-  const [prs, setPrs] = useState<Record<string, PrVerdict>>({})
+  /**
+   * Verdicts decided on THIS visit. They carry the prose evidence; the ones read back
+   * from the server carry only the verdict, since `basis` is derived and not stored.
+   */
+  const [localPrs, setLocalPrs] = useState<Record<string, PrVerdict>>({})
   /**
    * Ids that have already started a rest timer this visit. Re-saving after an
    * uncheck must not restart rest — you are correcting numbers, not finishing a set.
@@ -241,6 +274,7 @@ export function useSession(sessionId: string): SessionState {
   const items = useMemo(() => data?.session.items ?? [], [data])
   const history = useMemo(() => data?.history ?? {}, [data])
   const priorSets = useMemo(() => data?.priorSets ?? {}, [data])
+  const performedOn = data?.session.performed_on ?? ''
 
   const loadTypeOf = useCallback(
     (exerciseId: string) =>
@@ -274,12 +308,32 @@ export function useSession(sessionId: string): SessionState {
       ).sort((a, b) => a.set_index - b.set_index || (a.side ?? '').localeCompare(b.side ?? ''))
 
       const h = history[item.exercise_id] ?? null
+      const priors = priorSets[item.exercise_id] ?? []
       return {
         position,
         exercise,
         inputs: inputsFor(exercise.load_type),
         rows: mine,
-        prev: mine.map((r) => prevLabel(h, exercise.load_type, r.set_index)),
+        /**
+         * Per POSITION, not per exercise: set 3 shows your last set 3. Pointing every
+         * row at the exercise's top set gave sets 2 and 3 a target they were never
+         * meant to hit, which is the same reason their progress never counted.
+         */
+        prev: mine.map((r) =>
+          prevAtPosition(priors, exercise.load_type, setOrdinal(r, mine), r.side),
+        ),
+        /**
+         * Today's saved sets join the record, so beating it moves it on the spot —
+         * and only then. `PREV` deliberately does not: it is the last session.
+         */
+        record: mine.map((r) =>
+          recordAtPosition(
+            [...priors, ...savedToday(mine, performedOn)],
+            exercise.load_type,
+            setOrdinal(r, mine),
+            r.side,
+          ),
+        ),
         target: suggestTarget(h, item.target_rep_low, item.target_rep_high, exercise.load_type),
         targetSets: item.target_sets,
         repLow: item.target_rep_low,
@@ -287,7 +341,7 @@ export function useSession(sessionId: string): SessionState {
         restSec: restBy[position] ?? 90,
       }
     })
-  }, [items, committed, draftsMerged, history, restBy])
+  }, [items, committed, draftsMerged, history, priorSets, performedOn, restBy])
 
   /**
    * Takes the ROW, not an id. A derived blank row is not in `drafts` yet, and the
@@ -317,26 +371,36 @@ export function useSession(sessionId: string): SessionState {
       const isResave = restedIds.has(persistedId)
 
       /**
+       * The POSITION this set holds — its rank among the exercise's working sets,
+       * warmups skipped. Computed over every row of the block, committed or draft, so
+       * it matches what `prior_sets` will number this row as once it uploads.
+       */
+      const block = new Map<string, SetRow>()
+      for (const r of committed) if (r.exercise_id === row.exercise_id) block.set(r.id, r)
+      for (const d of Object.values(draftsMerged)) {
+        if (d.exercise_id === row.exercise_id) block.set(d.id, d)
+      }
+      block.set(row.id, row)
+      const ordinal = setOrdinal(row, [...block.values()])
+
+      /**
        * PR decided here, on the client, before the write. §4.3 requires the stamp
-       * with no round trip — and it has to include this session's already-committed
-       * sets, or set 3 would never beat set 2 of the same session.
+       * with no round trip.
+       *
+       * This session's already-committed sets join the pool so an all-time claim has
+       * to clear today as well. They cannot pollute the positional comparison — every
+       * one of them holds a different position by construction. The pool is the same
+       * one `record` is replayed from, so the stamp and the record line cannot disagree.
        */
       const priors = [
         ...(priorSets[row.exercise_id] ?? []),
-        ...committed
-          .filter((r) => r.exercise_id === row.exercise_id && r.kind !== 'warmup')
-          .map((r) => ({
-            performed_on: data?.session.performed_on ?? '',
-            weight_kg: r.weight_kg,
-            reps: r.reps,
-            duration_sec: r.duration_sec,
-          })),
+        ...savedToday([...block.values()], data?.session.performed_on ?? ''),
       ]
       // A warmup is never a PR — beating a warmup is not a record.
-      const verdict =
+      const verdict: PrVerdict =
         row.kind === 'warmup'
-          ? { isPr: false, kinds: [], previousBest: null, basis: null }
-          : detectPr(row, priors, loadType)
+          ? { isPr: false, kinds: [], scope: null, setOrdinal: 0, previousBest: null, basis: null }
+          : detectPr({ ...row, set_ordinal: ordinal }, priors, loadType)
 
       /**
        * Local write, then return. Nothing here awaits the network — that is the
@@ -362,6 +426,8 @@ export function useSession(sessionId: string): SessionState {
             // `first_time` is recorded but is not a PR — the distinction is the
             // whole reason PRs mean anything here (§3.3).
             pr_kinds: verdict.kinds,
+            // `set` (best this position has done) or `all_time` (best of any set).
+            pr_scope: verdict.scope,
           },
         },
         // `day` is the session id, so a reload reads back exactly this session's
@@ -392,9 +458,9 @@ export function useSession(sessionId: string): SessionState {
       })
 
       setFlashKeys((prev) => new Set(prev).add(persistedId))
-      if (verdict.kinds.length > 0) setPrs((prev) => ({ ...prev, [persistedId]: verdict }))
+      if (verdict.kinds.length > 0) setLocalPrs((prev) => ({ ...prev, [persistedId]: verdict }))
       else {
-        setPrs((prev) => {
+        setLocalPrs((prev) => {
           const next = { ...prev }
           delete next[persistedId]
           return next
@@ -406,7 +472,16 @@ export function useSession(sessionId: string): SessionState {
         if (seconds > 0) setRestUntil({ at: Date.now() + seconds * 1000, position: row.position })
       }
     },
-    [loadTypeOf, sessionId, committed, restBy, priorSets, data?.session.performed_on, restedIds],
+    [
+      loadTypeOf,
+      sessionId,
+      committed,
+      draftsMerged,
+      restBy,
+      priorSets,
+      data?.session.performed_on,
+      restedIds,
+    ],
   )
 
   const uncommit = useCallback(
@@ -429,7 +504,7 @@ export function useSession(sessionId: string): SessionState {
       })
 
       setDrafts((prev) => ({ ...prev, [row.id]: unlocked }))
-      setPrs((prev) => {
+      setLocalPrs((prev) => {
         const next = { ...prev }
         delete next[row.id]
         return next
@@ -538,6 +613,39 @@ export function useSession(sessionId: string): SessionState {
     }
   }, [sessionId, refetch])
 
+  /**
+   * Stamps survive a reload. The verdict is stored on the row (`is_pr`, `pr_kinds`,
+   * `pr_scope`), so reopening a session shows the records it earned instead of a
+   * blank column — the stamp used to live only in this hook's state and vanished the
+   * moment you left the screen.
+   *
+   * `basis` is deliberately absent on these: the sentence is derived, and a stored
+   * one goes stale the way the spreadsheet's targets did. This visit's own verdicts
+   * are layered on top and do carry it.
+   */
+  const prs = useMemo<Record<string, PrVerdict>>(() => {
+    const stored = new Map((data?.sets ?? []).map((s) => [s.id, s] as const))
+    const out: Record<string, PrVerdict> = {}
+    for (const row of committed) {
+      const s = stored.get(row.id)
+      if (s === undefined || !s.is_pr) continue
+      const siblings = committed.filter(
+        (r) => r.exercise_id === row.exercise_id && isWorkingSet(r),
+      )
+      out[row.id] = {
+        isPr: true,
+        kinds: s.pr_kinds as PrKind[],
+        // Rows written before per-position PRs were judged against the undivided
+        // pool, which is exactly the all-time comparison.
+        scope: (s.pr_scope as PrScope | null) ?? 'all_time',
+        setOrdinal: setOrdinal(row, siblings),
+        previousBest: null,
+        basis: null,
+      }
+    }
+    return { ...out, ...localPrs }
+  }, [data?.sets, committed, localPrs])
+
   // Derived, so the countdown survives a backgrounded tab and costs no renders of
   // its own beyond the one-second clock every session already ticks.
   const remaining = restUntil === null ? 0 : Math.max(Math.ceil((restUntil.at - now) / 1000), 0)
@@ -550,7 +658,7 @@ export function useSession(sessionId: string): SessionState {
     retry: () => void refetch(),
 
     name: data?.session.name ?? '',
-    performedOn: data?.session.performed_on ?? '',
+    performedOn,
     gymName: data?.session.gym_name ?? '—',
     isFinished: data?.session.completed_at !== null && data?.session.completed_at !== undefined,
 

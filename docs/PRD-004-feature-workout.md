@@ -77,27 +77,55 @@ A PR is `MAX` over sets **for the same exercise at the same gym**. Cross-gym com
 
 When `is_current` changes, the first session at the new gym marks its sets as baselines automatically. No free-text flags, no manual bookkeeping.
 
-### 3.3 PR detection
+### 3.3 PR detection — per set position
 
 ```ts
 // lib/domain/train/detectPr.ts
 export type PrKind = 'weight' | 'reps_at_weight' | 'volume_set' | 'duration' | 'first_time'
+export type PrScope = 'all_time' | 'set'
 
 export function detectPr(
-  candidate: WorkoutSet,
-  history: WorkoutSet[],       // same exercise, same gym, before this session
+  candidate: Candidate,        // carries set_ordinal + side
+  history: PriorSet[],         // same exercise, same gym, whole record, before this session
   loadType: LoadType,
-): { isPr: boolean; kinds: PrKind[]; previousBest: WorkoutSet | null }
+): { isPr: boolean; kinds: PrKind[]; scope: PrScope | null; setOrdinal: number; previousBest: PriorSet | null; basis: string | null }
 ```
 
-Rules by load type:
-- `external_weight`: new max weight at ≥1 rep · OR more reps at an equal-or-higher weight than the previous best at that weight
+**A record is judged at the position it was set.** Set 1 competes with every set 1 on
+record, set 2 with every set 2. The original rule pooled every set of an exercise, and
+under it only the top set could ever win:
+
+```
+set 1  80 kg × 8   ← the only set that could be a record
+set 2  70 kg × 8
+set 3  60 kg × 8   ← 60 → 65 here is overload that nothing recorded
+```
+
+The live data makes the case: on `High-to-Low Cable Fly` the best set 1 is 11 kg and
+the best set 4 is 16 kg — this training *ramps up*, so pooling permanently disqualified
+the opening sets. `Cable Lateral Raise` is the same shape (set 1 best 5 kg, sets 2–3
+best 7.5 kg).
+
+Position is the **gate**. Beating the all-time best as well is a rank on top of it
+(`pr_scope`), never a way in — 50 kg × 11 is not progress at a position that has already
+held 60 kg × 20, however it compares to the rest of the exercise.
+
+Rules by load type, applied to whichever pool is being compared:
+- `external_weight`: new max weight at ≥1 rep · OR more reps at an equal-or-higher weight than the previous best at that weight · OR more set volume
 - `bodyweight`: more reps than previous max
 - `assisted`: same reps at *lower* assist, or more reps at equal assist
 - `duration`: longer hold
-- `first_time`: no history at this gym → `first_time`, **not** a PR (prevents the spreadsheet's 335 PR flags on ~41 sessions, which made PRs meaningless)
+- `first_time`: nothing at this position → `first_time`, **not** a PR. Covers a first session, a gym switch, and a fourth set added to a three-set exercise (prevents the spreadsheet's 335 PR flags on ~41 sessions, which made PRs meaningless)
 
-`is_pr` is stored as a real `boolean`. `pr_kinds` as `text[]`. Never free text.
+`is_pr` is stored as a real `boolean`, `pr_kinds` as `text[]`, `pr_scope` as
+`'all_time' | 'set'` — null on rows written before `0028`, which were judged against the
+undivided pool and so are all-time by definition. Never free text.
+
+**`set_ordinal` is the rank among that session's WORKING sets, not `set_index`.**
+Warmups occupy an index (the `unique (session_id, position, set_index, side)`
+constraint requires it), so the first working set sits at index 2 on a day with a warmup
+and index 1 on a day without. Grading positions on raw indexes would re-align the whole
+history every time the warmup count changed. Sides are numbered independently.
 
 ### 3.4 Progression suggestions — computed, never stored stale
 

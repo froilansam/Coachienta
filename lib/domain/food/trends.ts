@@ -4,7 +4,7 @@
  * never disagree (PRD-003 §5.3).
  */
 
-import { addDays } from '@/lib/domain/date'
+import { addDays, mondayOf } from '@/lib/domain/date'
 
 export interface DayBucket {
   bucket: string
@@ -151,13 +151,8 @@ export function qualitySummary(slices: readonly QualitySlice[]): string {
   return parts.length > 0 ? parts.join(' · ') : 'All entries graded medium.'
 }
 
-/** ISO Monday on or before `iso` — same rule as training calendar. */
-function mondayOf(iso: string): string {
-  const [y, m, d] = iso.split('-').map(Number)
-  const dt = new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1)
-  const day = (dt.getDay() + 6) % 7 // Mon=0
-  return addDays(iso, -day)
-}
+// `mondayOf` lives in `lib/domain/date.ts`. It had a third copy here and a second in
+// the training trends, which is two more places for the week boundary to drift.
 
 export interface FoodCalendarDay {
   on: string
@@ -199,6 +194,60 @@ export function foodCalendar(
     out.push({ week_start: start, days, onTargetDays })
   }
   return out
+}
+
+// ---------------------------------------------------------------------------
+// Weekly average
+// ---------------------------------------------------------------------------
+/**
+ * What a normal week of eating looks like. Same three rules as the training one
+ * (`lib/domain/train/trends.ts`): the current week is excluded because it is not
+ * over, the window starts at your first logged week rather than at the start of the
+ * range, and blank weeks in between still count.
+ *
+ * **Calories and protein are per LOGGED day, not per calendar day.** An unlogged day
+ * is a day with no data, not a day of eating nothing, and dividing by seven would
+ * quietly report a crash diet every time a week went half-logged — the same failure
+ * direction as a failed day fetch rendering as an empty day. `daysLogged` is
+ * returned alongside so the reader can see how much the mean is worth.
+ */
+export interface FoodWeeklyAverage {
+  weeks: number
+  /** Days with at least one entry, per week. */
+  daysLogged: number
+  /** Per logged day. */
+  kcal: number
+  proteinG: number
+}
+
+export function foodWeeklyAverage(
+  buckets: readonly DayBucket[],
+  today: string,
+  rangeDays: number,
+): FoodWeeklyAverage {
+  const none: FoodWeeklyAverage = { weeks: 0, daysLogged: 0, kcal: 0, proteinG: 0 }
+  const from = mondayOf(addDays(today, -rangeDays + 1))
+  const lastWeekStart = addDays(mondayOf(today), -7)
+  const until = addDays(lastWeekStart, 6)
+
+  const logged = buckets.filter(
+    (b) => b.entry_count > 0 && b.bucket >= from && b.bucket <= until,
+  )
+  if (logged.length === 0) return none
+
+  const earliest = logged.reduce((m, b) => (b.bucket < m ? b.bucket : m), until)
+  let weeks = 0
+  for (let w = mondayOf(earliest); w <= lastWeekStart; w = addDays(w, 7)) weeks += 1
+  if (weeks === 0) return none
+
+  const kcal = logged.reduce((n, b) => n + b.kcal, 0)
+  const protein = logged.reduce((n, b) => n + b.protein_g, 0)
+  return {
+    weeks,
+    daysLogged: Math.round((logged.length / weeks) * 10) / 10,
+    kcal: Math.round(kcal / logged.length),
+    proteinG: Math.round(protein / logged.length),
+  }
 }
 
 /** WeekGrid count encoding for food adherence tones. */

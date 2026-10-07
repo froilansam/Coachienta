@@ -276,6 +276,10 @@ export async function prs(
     exercise: String(r.exercise_name),
     muscle_group: String(r.muscle_group),
     kinds: (r.pr_kinds as string[]) ?? [],
+    // Records are per set position. Without these the coach would read four rows for
+    // one exercise on one day as four separate all-time bests.
+    scope: String(r.pr_scope ?? 'all_time'),
+    set: num(r.set_ordinal),
     weight_kg: nullableNum(r.weight_kg),
     reps: nullableNum(r.reps),
   }))

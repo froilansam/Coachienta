@@ -2,6 +2,7 @@
 import { BandLine } from '@/components/patterns/BandLine'
 import { DotPlot } from '@/components/patterns/DotPlot'
 import { LineSet } from '@/components/patterns/LineSet'
+import { MetricStrip } from '@/components/patterns/MetricStrip'
 import { Panel } from '@/components/patterns/Panel'
 import { BarLegend, StackedBars } from '@/components/patterns/StackedBars'
 import { TickBars } from '@/components/patterns/TickBars'
@@ -106,6 +107,10 @@ function FoodPanels({ vm }: { vm: ReturnType<typeof useTrends> }) {
     <>
       <Text variant="micro">{vm.averagesCaption}</Text>
 
+      <Panel title="Weekly average" caption={vm.foodWeeklyNote}>
+        <MetricStrip metrics={vm.foodWeeklyMetrics} />
+      </Panel>
+
       <Panel
         title="Calories vs target"
         caption="Daily intake. The shaded band is the latest phase target (gym and rest differ)."
@@ -174,6 +179,10 @@ function TrainPanels({ vm }: { vm: ReturnType<typeof useTrends> }) {
       ) : (
         <Text variant="micro">{vm.gymName}</Text>
       )}
+
+      <Panel title="Weekly average" caption={vm.trainWeeklyNote}>
+        <MetricStrip metrics={vm.trainWeeklyMetrics} />
+      </Panel>
 
       <AdherencePanel rows={vm.adherenceRows} note={vm.adherenceNote} />
 
