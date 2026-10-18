@@ -303,11 +303,19 @@ export function useSession(sessionId: string): SessionState {
        * deterministic id. Seeding it into state from an effect was a cascading
        * render; deriving it is free and it becomes real state on the first keystroke.
        */
-      const mine = (
-        real.length > 0 ? real : [blankSet(item.exercise_id, position, [], null, `draft:${position}`)]
-      ).sort((a, b) => a.set_index - b.set_index || (a.side ?? '').localeCompare(b.side ?? ''))
-
       const h = history[item.exercise_id] ?? null
+      const target = suggestTarget(h, item.target_rep_low, item.target_rep_high, exercise.load_type)
+      const blank = blankSet(item.exercise_id, position, [], null, `draft:${position}`)
+      /**
+       * Set 1 starts at the working weight. A derived row is not saved until it is
+       * edited, so this is a suggestion sitting in the field, not a logged set.
+       */
+      const seeded =
+        blank.weight_kg === null && target.loadKg !== null ? { ...blank, weight_kg: target.loadKg } : blank
+      const mine = (real.length > 0 ? real : [seeded]).sort(
+        (a, b) => a.set_index - b.set_index || (a.side ?? '').localeCompare(b.side ?? ''),
+      )
+
       const priors = priorSets[item.exercise_id] ?? []
       return {
         position,
@@ -334,7 +342,7 @@ export function useSession(sessionId: string): SessionState {
             r.side,
           ),
         ),
-        target: suggestTarget(h, item.target_rep_low, item.target_rep_high, exercise.load_type),
+        target,
         targetSets: item.target_sets,
         repLow: item.target_rep_low,
         repHigh: item.target_rep_high,

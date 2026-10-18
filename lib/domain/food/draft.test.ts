@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { FoodRow } from '@/lib/schemas/food'
 import {
   buildDraftItem, defaultAmount, mealForHour, presetsFor,
-  stepFor, sumMacros, todayLocal, toLogEntry,
+  stepFor, sumMacros, todayLocal, toDayEntry, toLogEntry,
 } from './draft'
 
 const rice: FoodRow = {
@@ -57,6 +57,18 @@ describe('toLogEntry — history must be immutable', () => {
       logged_on: '2026-08-06', meal: 'Lunch', food_id: 'f1',
       food_name: 'White rice (cooked)', amount: 200, unit: 'g',
       kcal: 252, food_version: 1, confidence: 'high', resolved_by: 'library',
+    })
+  })
+})
+
+describe('toDayEntry — a log is complete the moment it is written', () => {
+  it('carries the portion and every macro, not a name and a calorie stub', () => {
+    const e = toDayEntry(buildDraftItem(rice, 200, 'a'), 'Lunch', '2026-08-06T03:00:00.000Z')
+    expect(e).toMatchObject({
+      id: 'a', meal: 'Lunch', foodName: 'White rice (cooked)',
+      amount: 200, unit: 'g', kcal: 252, proteinG: 4.6, carbsG: 56.4, fatG: 0.4,
+      confidence: 'high', loggedAt: '2026-08-06T03:00:00.000Z',
+      resolvedBy: 'library', foodVersion: 1,
     })
   })
 })

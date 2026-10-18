@@ -8,43 +8,72 @@ const h = (o: Partial<History> = {}): History => ({
 })
 
 /**
- * Double progression, per PRD-004 §3.4's table. Every case asserts the `basis`
- * too — a suggestion without its evidence is unauditable (AC-2.8), and that is
- * exactly how the spreadsheet's targets went 57 days stale unnoticed.
+ * Weighted work uses a fixed cap: under 10 reps is the working weight, and 10 or
+ * more means that load was light. The plan's rep range still drives assisted and
+ * unweighted work. Every case asserts the `basis` too — a suggestion without its
+ * evidence is unauditable (AC-2.8).
  */
-describe('suggestTarget — the four situations in §3.4', () => {
+describe('suggestTarget — working weight', () => {
+  it('keeps the load when the heaviest set stayed under 10 reps', () => {
+    // 10 kg × 12 was the warm-up. History hands back the heaviest set, 15 × 8.
+    const t = suggestTarget(h({ last_weight_kg: 15, last_reps: 8 }), 8, 12, 'external_weight')
+    expect(t.kind).toBe('hold')
+    expect(t.suggestion).toBe('15 kg on set 1')
+    expect(t.loadKg).toBe(15)
+    expect(t.basis).toBe('from 2026-08-04: 15 kg × 8, working weight (under 10 reps)')
+  })
+
+  it('goes up one increment at 10 reps or more', () => {
+    const t = suggestTarget(h({ last_weight_kg: 15, last_reps: 10 }), 8, 12, 'external_weight')
+    expect(t.kind).toBe('add_load')
+    expect(t.suggestion).toBe('17.5 kg on set 1')
+    expect(t.loadKg).toBe(17.5)
+    expect(t.basis).toContain('10 reps or more')
+  })
+
+  it('treats a lone light set the same way — 12 reps is not a working set', () => {
+    const t = suggestTarget(h({ last_weight_kg: 10, last_reps: 12 }), 8, 12, 'external_weight')
+    expect(t.loadKg).toBe(12.5)
+    expect(t.suggestion).toBe('12.5 kg on set 1')
+  })
+
+  it('does not let the plan range talk it into adding a rep', () => {
+    const t = suggestTarget(h({ last_weight_kg: 15, last_reps: 8 }), 8, 12, 'external_weight')
+    expect(t.suggestion).not.toContain('×')
+  })
+})
+
+describe('suggestTarget — assisted work still follows the rep range', () => {
   it('at the top of the range: add load, drop to the bottom', () => {
-    const t = suggestTarget(h({ last_reps: 15 }), 10, 15, 'external_weight')
+    const t = suggestTarget(h({ last_reps: 15 }), 10, 15, 'assisted')
     expect(t.kind).toBe('add_load')
     expect(t.suggestion).toBe('12.5 kg × 10')
     expect(t.basis).toBe('from 2026-08-04: 10 kg × 15, top of 10–15 range')
   })
 
   it('inside the range: add one rep at the same load', () => {
-    const t = suggestTarget(h({ last_reps: 12 }), 10, 15, 'external_weight')
+    const t = suggestTarget(h({ last_reps: 12 }), 10, 15, 'assisted')
     expect(t.kind).toBe('add_reps')
     expect(t.suggestion).toBe('10 kg × 13')
     expect(t.basis).toContain('inside 10–15 range')
   })
 
   it('below the range: hold the load, chase the bottom', () => {
-    const t = suggestTarget(h({ last_reps: 7 }), 10, 15, 'external_weight')
+    const t = suggestTarget(h({ last_reps: 7 }), 10, 15, 'assisted')
     expect(t.kind).toBe('hold')
     expect(t.suggestion).toBe('10 kg × 10')
     expect(t.basis).toContain('below 10–15 range')
   })
 
   it('three sessions without regaining the best: call it a plateau', () => {
-    // "Add a rep" is bad advice after three sessions of not adding one.
-    const t = suggestTarget(h({ last_weight_kg: 10, best_weight_kg: 12.5, sessions_since: 3 }), 10, 15, 'external_weight')
+    const t = suggestTarget(h({ last_weight_kg: 10, best_weight_kg: 12.5, sessions_since: 3 }), 10, 15, 'assisted')
     expect(t.kind).toBe('plateau')
     expect(t.suggestion).toContain('back-off week')
     expect(t.basis).toContain('best 12.5 kg on 2026-07-01, 3 sessions since')
   })
 
   it('a plateau outranks the rep range', () => {
-    // Top of the range AND stalled — the stall is the more useful thing to say.
-    const t = suggestTarget(h({ last_reps: 15, last_weight_kg: 10, best_weight_kg: 12.5, sessions_since: 4 }), 10, 15, 'external_weight')
+    const t = suggestTarget(h({ last_reps: 15, last_weight_kg: 10, best_weight_kg: 12.5, sessions_since: 4 }), 10, 15, 'assisted')
     expect(t.kind).toBe('plateau')
   })
 })
@@ -84,8 +113,8 @@ describe('suggestTarget — incomplete records', () => {
     expect(t.suggestion).toContain('record weight and reps')
   })
 
-  it('copes with a missing rep range', () => {
-    const t = suggestTarget(h({ last_reps: 12 }), null, null, 'external_weight')
+  it('copes with a missing rep range on assisted work', () => {
+    const t = suggestTarget(h({ last_reps: 12 }), null, null, 'assisted')
     expect(t.suggestion).toBe('10 kg × 13')
     expect(t.basis).toContain('inside the range')
   })

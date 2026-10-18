@@ -36,12 +36,22 @@ export interface Target {
    */
   basis: string
   kind: 'baseline' | 'add_load' | 'add_reps' | 'hold' | 'plateau'
+  /**
+   * Kg to put on set 1. Null when there is no load to copy (a baseline, a
+   * hold, a plank). The live session prefills the first empty set from this.
+   */
+  loadKg: number | null
 }
 
 /** Smallest usable jump. Machines and dumbbells rarely offer less. */
 const INCREMENT_KG = 2.5
 /** Sessions without progress before it stops being a bad day and starts being a wall. */
 const PLATEAU_SESSIONS = 3
+/**
+ * A working set is under this many reps. At or above it the load was light
+ * enough to suggest going up, and that set is not the working weight.
+ */
+const WORKING_REP_CAP = 10
 
 const kg = (n: number): string => `${Number.isInteger(n) ? n : n.toFixed(1)} kg`
 
@@ -59,6 +69,7 @@ export function suggestTarget(
   if (!history || history.last_performed_on === null) {
     return {
       kind: 'baseline',
+      loadKg: null,
       suggestion:
         loadType === 'duration'
           ? `Establish a baseline — hold for ${repLow ?? 30} s and note how it felt`
@@ -76,6 +87,7 @@ export function suggestTarget(
     const next = Math.min(last + 5, top)
     return {
       kind: last >= top ? 'add_load' : 'add_reps',
+      loadKg: null,
       suggestion: last >= top ? `Hold ${top} s, then add load or a harder variation` : `Hold ${next} s`,
       basis: `from ${on}: ${last} s${repLow && repHigh ? `, target ${repLow}–${repHigh} s` : ''}`,
     }
@@ -86,8 +98,34 @@ export function suggestTarget(
   if (lastWeight === null || lastReps === null) {
     return {
       kind: 'hold',
+      loadKg: null,
       suggestion: 'Repeat last session and record weight and reps',
       basis: `from ${on}: incomplete record`,
+    }
+  }
+
+  /**
+   * Weighted work progresses on a fixed rep cap, not the plan's range.
+   *
+   * The working weight is the load on the sets under 10 reps. A lighter set at
+   * 12 reps is a warm-up, so it never becomes next session's set 1 — the
+   * heaviest set is what `exercise_history` already hands in, and that is the
+   * working weight whenever its reps stayed under the cap.
+   *
+   *   10 kg × 12, 15 kg × 8, 15 kg × 7  →  working weight 15 kg, set 1 next time
+   *
+   * Hitting 10 or more at that load means it was light. Suggest one increment up.
+   */
+  if (loadType === 'external_weight' || (loadType === 'bodyweight' && lastWeight > 0)) {
+    const goUp = lastReps >= WORKING_REP_CAP
+    const next = goUp ? lastWeight + INCREMENT_KG : lastWeight
+    return {
+      kind: goUp ? 'add_load' : 'hold',
+      loadKg: next,
+      suggestion: `${kg(next)} on set 1`,
+      basis: goUp
+        ? `from ${on}: ${kg(lastWeight)} × ${lastReps}, ${WORKING_REP_CAP} reps or more — add load`
+        : `from ${on}: ${kg(lastWeight)} × ${lastReps}, working weight (under ${WORKING_REP_CAP} reps)`,
     }
   }
 
@@ -101,6 +139,7 @@ export function suggestTarget(
   if (since >= PLATEAU_SESSIONS && history.best_weight_kg !== null && lastWeight < history.best_weight_kg) {
     return {
       kind: 'plateau',
+      loadKg: null,
       suggestion: 'Plateau — take a back-off week or switch to a variation',
       basis: `${evidence}; best ${kg(history.best_weight_kg)} on ${history.best_on}, ${since} sessions since`,
     }
@@ -111,6 +150,7 @@ export function suggestTarget(
     const next = lastWeight + INCREMENT_KG
     return {
       kind: 'add_load',
+      loadKg: null,
       suggestion: `${kg(next)} × ${repLow ?? repHigh}`,
       basis: `${evidence}, top of ${range ?? 'the range'}`,
     }
@@ -120,6 +160,7 @@ export function suggestTarget(
     // Below the range: hold the load and chase the bottom of it.
     return {
       kind: 'hold',
+      loadKg: null,
       suggestion: `${kg(lastWeight)} × ${repLow}`,
       basis: `${evidence}, below ${range ?? 'the range'}`,
     }
@@ -127,6 +168,7 @@ export function suggestTarget(
 
   return {
     kind: 'add_reps',
+    loadKg: null,
     suggestion: `${kg(lastWeight)} × ${lastReps + 1}`,
     basis: `${evidence}, inside ${range ?? 'the range'}`,
   }

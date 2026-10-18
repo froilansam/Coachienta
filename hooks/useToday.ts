@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  groupByMeal, macroRows, pctOf, remainingTerms, sumEntries,
+  entryFromMirror, groupByMeal, macroRows, pctOf, remainingTerms, sumEntries,
   type DayEntry, type MacroRow, type MealGroup, type NutritionTargets,
 } from '@/lib/domain/food/dayView'
 import { addDays, longDayLabel, relativeDayLabel, todayLocal } from '@/lib/domain/date'
@@ -120,29 +120,10 @@ export function useToday(): TodayView {
     const server = (data?.entries ?? []).filter((e) => !pendingDeleteIds?.has(e.id))
     const serverIds = new Set(server.map((e) => e.id))
 
+    // Already logged. The upload has not landed yet; the row still has its numbers.
     const localOnly: DayEntry[] = (pendingRows ?? [])
       .filter((r) => r.state !== 'synced' && !serverIds.has(r.id))
-      .map((r) => {
-        const d = r.data as { food_name?: string; kcal?: number }
-        return {
-          id: r.id,
-          meal: null,
-          foodName: d.food_name ?? 'Pending entry',
-          amount: 0,
-          unit: 'g',
-          kcal: d.kcal ?? 0,
-          proteinG: 0,
-          carbsG: 0,
-          fatG: 0,
-          confidence: 'medium' as const,
-          loggedAt: null,
-          // A queued row has no provenance yet — it has not been resolved server-side.
-          resolvedBy: null,
-          foodVersion: null,
-          notes: null,
-          pending: true,
-        }
-      })
+      .map((r) => entryFromMirror(r.id, r.data))
 
     return [...server, ...localOnly]
   }, [data?.entries, pendingRows, pendingDeleteIds])

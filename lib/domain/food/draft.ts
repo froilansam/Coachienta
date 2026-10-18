@@ -1,4 +1,5 @@
 import { todayLocal } from '@/lib/domain/date'
+import type { DayEntry } from '@/lib/domain/food/dayView'
 import { scaleMacros } from '@/lib/domain/macros'
 import type { FoodRow } from '@/lib/schemas/food'
 import type { Confidence, Macros, ResolutionSource, UnitBasis } from '@/lib/schemas/domain'
@@ -81,6 +82,33 @@ export interface LogEntryPayload {
   confidence: Confidence
   resolved_by: ResolutionSource
   notes: string | null
+}
+
+/**
+ * What Today shows the moment you log, before the upload comes back.
+ *
+ * The queue used to mirror only the name and the calories, and the screen filled
+ * the rest with zeros and a Pending chip. The entry was already logged — the
+ * numbers were known — so the row has to carry them.
+ */
+export function toDayEntry(item: DraftItem, meal: string | null, loggedAt: string): DayEntry {
+  const row = toLogEntry(item, '', meal)
+  return {
+    id: item.id,
+    meal: row.meal,
+    foodName: row.food_name,
+    amount: row.amount,
+    unit: row.unit,
+    kcal: row.kcal,
+    proteinG: row.protein_g,
+    carbsG: row.carbs_g,
+    fatG: row.fat_g,
+    confidence: row.confidence,
+    loggedAt,
+    resolvedBy: row.resolved_by,
+    foodVersion: row.food_version,
+    notes: row.notes,
+  }
 }
 
 export function toLogEntry(item: DraftItem, loggedOn: string, meal: string | null): LogEntryPayload {

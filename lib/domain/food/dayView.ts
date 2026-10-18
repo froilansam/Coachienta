@@ -27,8 +27,6 @@ export interface DayEntry {
   /** The `foods.version` in force when this was logged. Entries never move with it. */
   foodVersion: number | null
   notes: string | null
-  /** True while the row is still only in IndexedDB. */
-  pending?: boolean
 }
 
 export interface NutritionTargets {
@@ -56,6 +54,62 @@ export interface MacroRow {
 const round1 = (n: number) => Math.round(n * 10) / 10
 const mid = (lo: number | null, hi: number | null): number | null =>
   lo !== null && hi !== null ? (lo + hi) / 2 : (lo ?? hi)
+
+const CONFIDENCES = ['high', 'medium', 'low', 'user_verified'] as const
+const SOURCES = ['library', 'usda', 'openfoodfacts', 'ai_estimate', 'photo', 'manual'] as const
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
+
+const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+
+const oneOf = <T extends string>(v: unknown, allowed: readonly T[]): T | null =>
+  typeof v === 'string' && (allowed as readonly string[]).includes(v) ? (v as T) : null
+
+/**
+ * A row mirrored into IndexedDB at log time, read back as a day entry.
+ *
+ * New mirrors are a full `DayEntry`. Older ones stored only `{ food_name, kcal }`;
+ * those still render, with the name and calories they have, rather than a
+ * placeholder.
+ */
+export function entryFromMirror(id: string, data: unknown): DayEntry {
+  const d = isRecord(data) ? data : {}
+  if (typeof d.foodName === 'string') {
+    return {
+      id,
+      meal: typeof d.meal === 'string' ? d.meal : null,
+      foodName: d.foodName,
+      amount: num(d.amount),
+      unit: typeof d.unit === 'string' ? d.unit : 'g',
+      kcal: num(d.kcal),
+      proteinG: num(d.proteinG),
+      carbsG: num(d.carbsG),
+      fatG: num(d.fatG),
+      confidence: oneOf(d.confidence, CONFIDENCES) ?? 'medium',
+      loggedAt: typeof d.loggedAt === 'string' ? d.loggedAt : null,
+      resolvedBy: oneOf(d.resolvedBy, SOURCES),
+      foodVersion: typeof d.foodVersion === 'number' ? d.foodVersion : null,
+      notes: typeof d.notes === 'string' ? d.notes : null,
+    }
+  }
+  return {
+    id,
+    meal: null,
+    foodName: typeof d.food_name === 'string' ? d.food_name : 'Logged',
+    amount: 0,
+    unit: 'g',
+    kcal: num(d.kcal),
+    proteinG: 0,
+    carbsG: 0,
+    fatG: 0,
+    confidence: 'medium',
+    loggedAt: null,
+    resolvedBy: null,
+    foodVersion: null,
+    notes: null,
+  }
+}
 
 export const sumEntries = (entries: readonly DayEntry[]): Macros =>
   entries.reduce<Macros>(

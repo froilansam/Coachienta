@@ -56,7 +56,6 @@ export function DayTimeline({
               lang={/[　-鿿＀-￯]/.test(e.foodName) ? 'ja' : undefined}
               meta={
                 <span className="flex items-center gap-2">
-                  {e.pending ? <Chip label="Pending" tone="warn" size="sm" /> : null}
                   {e.confidence === 'low' ? <Chip label="Unverified" tone="warn" size="sm" /> : null}
                   {e.confidence === 'medium' ? <Chip label="Est" tone="warn" size="sm" /> : null}
                   <NumericValue value={e.kcal} decimals={0} />

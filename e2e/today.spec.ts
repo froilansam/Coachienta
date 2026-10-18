@@ -216,8 +216,9 @@ test('an offline log appears on Today immediately', async ({ page, context }) =>
   await page.getByRole('button', { name: 'ADD' }).click()
   await page.getByRole('button', { name: /LOG 1 ITEM/ }).click()
 
-  // Rendered from IndexedDB, before any upload.
-  await expect(page.getByText('Pending').first()).toBeVisible()
+  // Rendered from IndexedDB, before any upload — the same entry you logged.
+  await expect(page.getByRole('button', { name: /White rice \(cooked\).*200g/ })).toBeVisible()
+  await expect(page.getByText('Pending')).toHaveCount(0)
 
   // Drain before finishing. Otherwise the flush lands AFTER afterAll's delete and
   // the row survives into the next run — which is exactly what happened.

@@ -28,9 +28,9 @@ const SOURCE_LABEL: Record<string, string> = {
   manual: 'Entered by hand',
 }
 
-const loggedAtLabel = (iso: string | null): string =>
+const loggedAtLabel = (iso: string | null): string | null =>
   iso === null
-    ? 'Not yet uploaded'
+    ? null
     : new Date(iso).toLocaleString('en-GB', {
         weekday: 'short', day: 'numeric', month: 'short',
         hour: '2-digit', minute: '2-digit',
@@ -70,7 +70,6 @@ export function EntryDetailSheet({
 
         <div className="flex flex-wrap items-center gap-1.5">
           <Chip label={trust.label} tone={trust.tone === 'neutral' ? 'neutral' : trust.tone} />
-          {entry.pending ? <Chip label="Not yet uploaded" tone="warn" size="sm" /> : null}
         </div>
         <Text variant="micro">{trust.explain}</Text>
 

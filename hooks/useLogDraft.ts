@@ -6,6 +6,7 @@ import {
   mealForHour,
   sumMacros,
   todayLocal,
+  toDayEntry,
   toLogEntry,
   type DraftItem,
 } from '@/lib/domain/food/draft'
@@ -117,7 +118,7 @@ export function useLogDraft(onCommitted?: () => void, day?: string): LogDraft {
             op: 'insert',
             payload: toLogEntry(item, loggedOn, meal),
           },
-          { day: loggedOn, data: { food_name: item.food.name, kcal: item.macros.kcal } },
+          { day: loggedOn, data: toDayEntry(item, meal, new Date().toISOString()) },
         )
       }
       const n = items.length

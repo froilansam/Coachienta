@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  gradeMacro, groupByMeal, macroRows, pctOf, remainingTerms, sumEntries,
+  entryFromMirror, gradeMacro, groupByMeal, macroRows, pctOf, remainingTerms, sumEntries,
   type DayEntry, type NutritionTargets,
 } from './dayView'
 
@@ -16,6 +16,24 @@ const targets: NutritionTargets = {
   proteinG: 160, carbsGymLow: 290, carbsRestLow: 230, fatHigh: 75,
   phaseLabel: '4-week weight-maintenance recomp',
 }
+
+describe('entryFromMirror', () => {
+  it('reads a full logged entry back unchanged', () => {
+    const logged = entry({
+      id: 'ignored', meal: 'Dinner', foodName: 'White rice (cooked)',
+      amount: 200, unit: 'g', kcal: 252, proteinG: 4.6, carbsG: 56.4, fatG: 0.4,
+      confidence: 'high', loggedAt: '2026-08-06T03:00:00.000Z',
+      resolvedBy: 'library', foodVersion: 1,
+    })
+    expect(entryFromMirror('row-1', logged)).toEqual({ ...logged, id: 'row-1' })
+  })
+
+  it('still reads an older mirror that only stored the name and the calories', () => {
+    expect(entryFromMirror('row-1', { food_name: 'White rice (cooked)', kcal: 252 })).toMatchObject({
+      id: 'row-1', foodName: 'White rice (cooked)', kcal: 252, amount: 0, proteinG: 0,
+    })
+  })
+})
 
 describe('sumEntries', () => {
   it('adds without float noise', () => {
