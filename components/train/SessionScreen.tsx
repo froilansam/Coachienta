@@ -12,6 +12,7 @@ import { Text } from '@/components/ui/Text'
 import { useSession } from '@/hooks/useSession'
 import { useSyncStatus } from '@/hooks/useSyncStatus'
 import { ExerciseBlockView } from './ExerciseBlock'
+import { SessionReviewCard } from './SessionReview'
 import { ExercisePickerSheet } from './ExercisePickerSheet'
 import { RestOverlay } from './RestOverlay'
 
@@ -81,6 +82,13 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
           still gets stretched to the full width and reads as a banner. */}
       {vm.isFinished ? <Chip label="Finished" tone="pos" className="self-start" /> : null}
 
+      <SessionReviewCard
+        status={vm.reviewStatus}
+        review={vm.review}
+        error={vm.reviewError}
+        onRetry={vm.retryReview}
+      />
+
       <Rule strong />
 
       {vm.isLoading ? (
@@ -134,8 +142,8 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                 FINISH SESSION
               </Button>
               <Text variant="micro">
-                Finishing only stamps the clock. Sets are already saved on this device the moment you
-                tick them, and upload on their own.
+                Finishing stamps the clock. Sets are already saved on this device the moment you
+                tick them. The coach reads the session after that.
               </Text>
             </>
           )}

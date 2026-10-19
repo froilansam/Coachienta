@@ -290,6 +290,8 @@ test('FINISH stamps the clock once and is idempotent', async ({ page }) => {
   await startSession(page, 'Day 1 Push', `${MARK} finish`)
   await page.getByRole('button', { name: 'FINISH SESSION' }).click()
   await expect(page.getByText('Finished', { exact: true })).toBeVisible()
+  // Nothing was logged, so the coach is not asked. An empty read would be a stored lie.
+  await expect(page.getByText('Nothing was logged, so there is nothing to read.')).toBeVisible()
 
   const first = await withDb(async (c) => {
     const r = await c.query<{ completed_at: string }>(
@@ -311,4 +313,53 @@ test('FINISH stamps the clock once and is idempotent', async ({ page }) => {
     return r.rows[0]!.completed_at
   })
   expect(second).toBe(first)
+})
+
+/**
+ * The read itself is a model judgment and is not what this test proves. What it
+ * proves is that finishing, and later opening that same session, both ask for it
+ * and both show it. The route is stubbed so the suite never spends a real call.
+ *
+ * `page.route` stops intercepting once the service worker controls the page.
+ */
+test.describe('coach read of a finished session', () => {
+  test.use({ serviceWorkers: 'block' })
+
+  test('finish and a later visit both show the read', async ({ page }) => {
+    let calls = 0
+    await page.route('**/api/data/session-review', (route) => {
+      calls += 1
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          review: {
+            verdict: 'mixed',
+            headline: 'The press moved. The rest held.',
+            read: 'Shoulder Press Machine was first, so that record was the easy one.',
+            recommendations: ['Next time take Shoulder Press Machine to 57.5 kg on set 1.'],
+          },
+          fingerprint: 'stub',
+        }),
+      })
+    })
+
+    const url = await startSession(page, 'Day 1 Push', `${MARK} review`)
+    await page.getByLabel(/KG for set 1 of Shoulder Press Machine/).fill('55')
+    await page.getByLabel(/Reps for set 1 of Shoulder Press Machine/).fill('8')
+    await page.getByRole('checkbox', { name: /Save set 1 of Shoulder Press Machine/ }).click()
+    await page.getByRole('checkbox', { name: /Unsave set 1 of .*/ }).waitFor()
+
+    await page.getByRole('button', { name: 'FINISH SESSION' }).click()
+    await expect(page.getByText('The press moved. The rest held.')).toBeVisible()
+    await expect(page.getByText('Shoulder Press Machine was first, so that record was the easy one.')).toBeVisible()
+    await expect(page.getByText('Next time take Shoulder Press Machine to 57.5 kg on set 1.')).toBeVisible()
+    expect(calls).toBe(1)
+
+    // A session finished earlier is read when it is opened, not only at the tap.
+    await page.goto(`/train?k=${TOKEN}`)
+    await page.goto(url)
+    await expect(page.getByText('The press moved. The rest held.')).toBeVisible()
+    expect(calls).toBe(2)
+  })
 })

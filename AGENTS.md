@@ -143,6 +143,7 @@ Rules:
 
 ## Live session (P3-3)
 
+- **A finished session is read by the coach once per set of logged sets.** `POST /api/data/session-review` runs when a finished session is on screen and no stored read matches `reviewFingerprint`. Finish stamps the clock first; the read follows, and it never blocks the stamp. Opening a session finished weeks ago reads it on that open. The brief states exercise order — a record first is the easy kind, the same record third was done after everything above it — and the model may only cite numbers in that brief. The call is the `review` job (`openai/gpt-oss-120b`). `llama-3.3-70b-versatile` 404s on this account, and the read does not fall back onto Gemini's 20-a-day photo pool.
 - **The commit path never awaits the network.** `enqueue()` → Dexie → re-render via `useLiveQuery`. `workout_sets` was already in the sync allowlist and the Dexie mirror, so this reuses Feature 1's proven queue. Do not add an await to it: AC-2.1 is under 200 ms offline.
 - **A derived row's id is a React key, NOT a database key.** The first row per exercise is derived (not seeded by an effect) so it needs a stable id like `draft:1` — which is not a uuid and was rejected by `/api/data/sync` with a 400 *while the UI showed a locked row*. `SetRow.derived` marks it; a real uuid is minted at commit.
 - **Rest is a deadline, not a countdown.** `setState` ticking in an effect is a cascading-render lint error and drifts on a backgrounded tab.

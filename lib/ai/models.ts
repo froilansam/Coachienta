@@ -28,6 +28,13 @@ export const MODELS = {
    */
   plan: { provider: 'groq', id: 'llama-3.3-70b-versatile' },
   planFallback: { provider: 'google', id: 'gemini-3.6-flash' },
+  /**
+   * A finished-session read. `llama-3.3-70b-versatile` returned 404 on this account
+   * on 2026-10-19 ("does not exist or you do not have access"), so the read cannot
+   * ride `plan`. `openai/gpt-oss-120b` answers `generateText` with a JSON object in
+   * `content`. No Gemini fallback: that pool is the 20 calls a day photo logging uses.
+   */
+  review: { provider: 'groq', id: 'openai/gpt-oss-120b' },
   cheap: { provider: 'groq', id: 'llama-3.1-8b-instant' },
   vision: { provider: 'google', id: 'gemini-3.6-flash' },
   /**

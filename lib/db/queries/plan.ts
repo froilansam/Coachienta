@@ -1,5 +1,6 @@
 import 'server-only'
 import { db } from '@/lib/db/client'
+import { SessionReviewSchema, type SessionReview } from '@/lib/domain/train/review'
 import type { History } from '@/lib/domain/train/progression'
 import type { PriorSet } from '@/lib/domain/train/detectPr'
 
@@ -86,7 +87,12 @@ export interface SessionView {
   /** Null for sessions imported from the spreadsheet — render a dash, not 0. */
   started_at: string | null
   completed_at: string | null
+  /** The stored coach's read, when one has been written for the current sets. */
+  review: SessionReview | null
+  reviewFingerprint: string | null
   items: Array<{
+    /** Plan position. Sets are stored against this, so the coach's brief must use it. */
+    position: number
     exercise_id: string
     name: string
     /** The whole row, so the session screen knows which inputs to render. */
@@ -112,7 +118,7 @@ export interface ExerciseLite {
 export async function getSession(id: string): Promise<SessionView | null> {
   const { data, error } = await db
     .from('workout_sessions')
-    .select('id, name, performed_on, gym_id, started_at, completed_at, gyms(name), workout_plans(plan_exercises(position, exercise_id, target_sets, target_rep_low, target_rep_high, exercises(id, name, muscle_group, movement_pattern, load_type, is_unilateral, equipment)))')
+    .select('id, name, performed_on, gym_id, started_at, completed_at, review, review_fingerprint, gyms(name), workout_plans(plan_exercises(position, exercise_id, target_sets, target_rep_low, target_rep_high, exercises(id, name, muscle_group, movement_pattern, load_type, is_unilateral, equipment)))')
     .eq('id', id)
     .maybeSingle()
   if (error) throw new Error(`getSession: ${error.message}`)
@@ -134,6 +140,7 @@ export async function getSession(id: string): Promise<SessionView | null> {
 
   const plan = one(data.workout_plans as { plan_exercises?: Row[] } | { plan_exercises?: Row[] }[] | null)
   const rows = (plan?.plan_exercises ?? []).slice().sort((a, b) => a.position - b.position)
+  const review = SessionReviewSchema.safeParse(data.review)
 
   return {
     id: data.id as string,
@@ -142,8 +149,11 @@ export async function getSession(id: string): Promise<SessionView | null> {
     gym_id: (data.gym_id as string | null) ?? null,
     started_at: (data.started_at as string | null) ?? null,
     completed_at: (data.completed_at as string | null) ?? null,
+    review: review.success ? review.data : null,
+    reviewFingerprint: review.success ? ((data.review_fingerprint as string | null) ?? null) : null,
     gym_name: one(data.gyms as { name: string } | { name: string }[] | null)?.name ?? null,
     items: rows.map((r) => ({
+      position: r.position,
       exercise_id: r.exercise_id,
       name: one(r.exercises)?.name ?? 'Unknown exercise',
       exercise: one(r.exercises),
@@ -216,6 +226,18 @@ export async function priorSetsByExercise(
     })
   }
   return out
+}
+
+export async function saveSessionReview(
+  sessionId: string,
+  review: SessionReview,
+  fingerprint: string,
+): Promise<void> {
+  const { error } = await db
+    .from('workout_sessions')
+    .update({ review, review_fingerprint: fingerprint })
+    .eq('id', sessionId)
+  if (error) throw new Error(error.message)
 }
 
 export async function finishSession(sessionId: string): Promise<void> {

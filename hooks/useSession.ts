@@ -1,10 +1,10 @@
 'use client'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { SessionPayload } from '@/app/api/data/session/route'
 import { local } from '@/lib/offline/db'
-import { SYNCED_EVENT, enqueue } from '@/lib/offline/sync'
+import { SYNCED_EVENT, enqueue, flush } from '@/lib/offline/sync'
 import {
   blankSet,
   formatDuration,
@@ -28,6 +28,7 @@ import {
   type PrVerdict,
 } from '@/lib/domain/train/detectPr'
 import { suggestTarget, type Target } from '@/lib/domain/train/progression'
+import { reviewFingerprint, type ReviewLoggedSet, type SessionReview } from '@/lib/domain/train/review'
 import type { ExerciseLite } from '@/lib/db/queries/plan'
 import type { ExerciseListResponse } from '@/app/api/data/exercises/route'
 import type { Exercise } from '@/lib/domain/train/exercise'
@@ -99,6 +100,14 @@ export interface SessionState {
   prs: Record<string, PrVerdict>
   finish: () => Promise<void>
   isFinishing: boolean
+  /**
+   * The coach's read of a finished session. Hidden until it is finished. A stored
+   * read is shown at once; a session that has never been read is read on open.
+   */
+  review: SessionReview | null
+  reviewStatus: 'hidden' | 'empty' | 'loading' | 'ready' | 'error'
+  reviewError: string | null
+  retryReview: () => void
   label: (row: SetRow) => string
 
   /**
@@ -607,6 +616,85 @@ export function useSession(sessionId: string): SessionState {
     ])
   }, [pendingRemoval, edit, pending, qc])
 
+  const loggedForReview = useMemo<ReviewLoggedSet[]>(
+    () =>
+      (data?.sets ?? []).map((s) => ({
+        position: s.position,
+        exerciseId: s.exercise_id,
+        setIndex: s.set_index,
+        kind: s.kind,
+        side: s.side,
+        weightKg: s.weight_kg,
+        reps: s.reps,
+        durationSec: s.duration_sec,
+        isPr: s.is_pr,
+        prScope: s.pr_scope,
+      })),
+    [data?.sets],
+  )
+  const fingerprint = useMemo(() => reviewFingerprint(loggedForReview), [loggedForReview])
+  const storedReview =
+    data?.session.review && data.session.reviewFingerprint === fingerprint && fingerprint !== ''
+      ? data.session.review
+      : null
+  const [reviewNonce, setReviewNonce] = useState(0)
+  const [fetchedReview, setFetchedReview] = useState<{
+    token: string
+    review: SessionReview | null
+    error: string | null
+  } | null>(null)
+  const reviewToken = `${reviewNonce}:${fingerprint}`
+  const fetched = fetchedReview?.token === reviewToken ? fetchedReview : null
+  const finished = data?.session.completed_at != null
+  /** One attempt to upload sets that finished before they reached the server. */
+  const flushedEmpty = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!finished || fingerprint !== '' || committed.length === 0) return
+    if (flushedEmpty.current === sessionId) return
+    flushedEmpty.current = sessionId
+    void flush().then(() => refetch())
+  }, [finished, fingerprint, committed.length, sessionId, refetch])
+
+  useEffect(() => {
+    if (!finished || fingerprint === '' || storedReview) return
+    if (fetchedReview?.token === reviewToken) return
+    let cancel = false
+    void (async () => {
+      await flush()
+      const res = await fetch('/api/data/session-review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: sessionId }),
+      })
+      const body = (await res.json().catch(() => null)) as {
+        review?: SessionReview
+        error?: string
+      } | null
+      if (cancel) return
+      setFetchedReview({
+        token: reviewToken,
+        review: body?.review ?? null,
+        error: body?.review ? null : (body?.error ?? 'The coach could not read this session.'),
+      })
+      if (body?.review) await refetch()
+    })()
+    return () => {
+      cancel = true
+    }
+  }, [finished, fingerprint, storedReview, fetchedReview?.token, reviewToken, sessionId, refetch])
+
+  const review = storedReview ?? fetched?.review ?? null
+  const reviewStatus: SessionState['reviewStatus'] = !finished
+    ? 'hidden'
+    : review
+      ? 'ready'
+      : fingerprint === '' && committed.length === 0
+        ? 'empty'
+        : fetched?.error
+          ? 'error'
+          : 'loading'
+
   const finish = useCallback(async () => {
     setIsFinishing(true)
     try {
@@ -615,6 +703,8 @@ export function useSession(sessionId: string): SessionState {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: sessionId }),
       })
+      // Sets have to be on the server before the coach can read them.
+      await flush()
       await refetch()
     } finally {
       setIsFinishing(false)
@@ -727,6 +817,14 @@ export function useSession(sessionId: string): SessionState {
     prs,
     finish,
     isFinishing,
+    review,
+    reviewStatus,
+    reviewError: fetched?.error ?? null,
+    retryReview: () => {
+      flushedEmpty.current = null
+      setFetchedReview(null)
+      setReviewNonce((n) => n + 1)
+    },
     label: setLabel,
 
     library: libraryData?.exercises ?? [],
