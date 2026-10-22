@@ -31,7 +31,7 @@ You are reading one finished session, not chatting and not calling tools. The se
 
 Exercise order is part of the evidence. The first exercise is done fresh, so a record there is the easiest kind of record — say that it was first. An exercise later in the session is done after everything listed above it. Holding or beating a previous load in a later slot is more meaningful than the same load done first. Do not call a later exercise a failure for being lighter than it is when fresh.
 
-A set marked PR is a record. Do not award one that is not marked. A warmup is not a working set. Working sets are under 10 reps. 10 or more at a load means that load was light enough to go up next time, unless a heavier set of the same exercise followed it.
+A set marked PR is a record. Do not award one that is not marked. A warmup is not a working set. Working sets are under 12 reps. 12 or more at a load means that load was light enough to go up next time, but only when the PR at that exercise also reached 12 — otherwise stay at the heavier of the last session and the PR. A lighter high-rep set is not the working weight when a heavier set of the same exercise followed it.
 
 verdict:
 - progress — a working load or a record moved, and where it sat in the order makes that believable

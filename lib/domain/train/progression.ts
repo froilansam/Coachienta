@@ -49,9 +49,9 @@ const INCREMENT_KG = 2.5
 const PLATEAU_SESSIONS = 3
 /**
  * A working set is under this many reps. At or above it the load was light
- * enough to suggest going up, and that set is not the working weight.
+ * enough to suggest going up — but only when the PR cleared it too.
  */
-const WORKING_REP_CAP = 10
+const WORKING_REP_CAP = 12
 
 const kg = (n: number): string => `${Number.isInteger(n) ? n : n.toFixed(1)} kg`
 
@@ -107,25 +107,37 @@ export function suggestTarget(
   /**
    * Weighted work progresses on a fixed rep cap, not the plan's range.
    *
-   * The working weight is the load on the sets under 10 reps. A lighter set at
-   * 12 reps is a warm-up, so it never becomes next session's set 1 — the
-   * heaviest set is what `exercise_history` already hands in, and that is the
-   * working weight whenever its reps stayed under the cap.
+   * The heaviest set is what `exercise_history` already hands in, so a lighter
+   * high-rep set never becomes next session's set 1 on its own. The load goes
+   * up one increment only when BOTH that last set and the PR reached the cap.
+   * Otherwise set 1 stays at the heavier of the two — a 12-rep day below your
+   * PR does not jump past a PR that is still under 12, and a light last session
+   * does not forget the PR.
    *
-   *   10 kg × 12, 15 kg × 8, 15 kg × 7  →  working weight 15 kg, set 1 next time
-   *
-   * Hitting 10 or more at that load means it was light. Suggest one increment up.
+   *   last 15 kg × 11, PR 15 kg × 8   →  15 kg
+   *   last 15 kg × 12, PR 20 kg × 8   →  20 kg
+   *   last 15 kg × 12, PR 15 kg × 12  →  17.5 kg
    */
   if (loadType === 'external_weight' || (loadType === 'bodyweight' && lastWeight > 0)) {
-    const goUp = lastReps >= WORKING_REP_CAP
-    const next = goUp ? lastWeight + INCREMENT_KG : lastWeight
+    const bestWeight = history.best_weight_kg
+    const bestReps = history.best_reps
+    const hasPr = bestWeight !== null && bestReps !== null
+    const lastCleared = lastReps >= WORKING_REP_CAP
+    const prCleared = hasPr && bestReps >= WORKING_REP_CAP
+    const heavier = hasPr ? Math.max(lastWeight, bestWeight) : lastWeight
+    const goUp = lastCleared && (!hasPr || prCleared)
+    const next = goUp ? heavier + INCREMENT_KG : heavier
+    const lastBit = `last ${on}: ${kg(lastWeight)} × ${lastReps}`
+    const prBit = hasPr ? `; PR ${kg(bestWeight)} × ${bestReps} on ${history.best_on}` : ''
     return {
       kind: goUp ? 'add_load' : 'hold',
       loadKg: next,
       suggestion: `${kg(next)} on set 1`,
       basis: goUp
-        ? `from ${on}: ${kg(lastWeight)} × ${lastReps}, ${WORKING_REP_CAP} reps or more — add load`
-        : `from ${on}: ${kg(lastWeight)} × ${lastReps}, working weight (under ${WORKING_REP_CAP} reps)`,
+        ? hasPr
+          ? `${lastBit}${prBit} — ${WORKING_REP_CAP} reps or more on both, add load`
+          : `${lastBit} — ${WORKING_REP_CAP} reps or more, add load`
+        : `${lastBit}${prBit} — under ${WORKING_REP_CAP}, stay at ${kg(next)}`,
     }
   }
 

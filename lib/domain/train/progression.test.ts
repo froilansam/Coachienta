@@ -8,33 +8,71 @@ const h = (o: Partial<History> = {}): History => ({
 })
 
 /**
- * Weighted work uses a fixed cap: under 10 reps is the working weight, and 10 or
- * more means that load was light. The plan's rep range still drives assisted and
- * unweighted work. Every case asserts the `basis` too — a suggestion without its
- * evidence is unauditable (AC-2.8).
+ * Weighted work uses a fixed cap: under 12 reps is the working weight, and 12 or
+ * more on both the last session and the PR means that load was light. The plan's
+ * rep range still drives assisted and unweighted work. Every case asserts the
+ * `basis` too — a suggestion without its evidence is unauditable (AC-2.8).
  */
 describe('suggestTarget — working weight', () => {
-  it('keeps the load when the heaviest set stayed under 10 reps', () => {
-    // 10 kg × 12 was the warm-up. History hands back the heaviest set, 15 × 8.
-    const t = suggestTarget(h({ last_weight_kg: 15, last_reps: 8 }), 8, 12, 'external_weight')
+  it('keeps the load when the heaviest set stayed under 12 reps', () => {
+    // 10 kg × 14 was the warm-up. History hands back the heaviest set, 15 × 8.
+    const t = suggestTarget(
+      h({ last_weight_kg: 15, last_reps: 8, best_weight_kg: 15, best_reps: 8 }),
+      8,
+      12,
+      'external_weight',
+    )
     expect(t.kind).toBe('hold')
     expect(t.suggestion).toBe('15 kg on set 1')
     expect(t.loadKg).toBe(15)
-    expect(t.basis).toBe('from 2026-08-04: 15 kg × 8, working weight (under 10 reps)')
+    expect(t.basis).toContain('under 12')
   })
 
-  it('goes up one increment at 10 reps or more', () => {
-    const t = suggestTarget(h({ last_weight_kg: 15, last_reps: 10 }), 8, 12, 'external_weight')
+  it('stays put at 11 reps even when the PR already has 12', () => {
+    const t = suggestTarget(
+      h({ last_weight_kg: 15, last_reps: 11, best_weight_kg: 15, best_reps: 12 }),
+      8,
+      12,
+      'external_weight',
+    )
+    expect(t.kind).toBe('hold')
+    expect(t.loadKg).toBe(15)
+  })
+
+  it('goes up one increment only when last session and the PR both reached 12', () => {
+    const t = suggestTarget(
+      h({ last_weight_kg: 15, last_reps: 12, best_weight_kg: 15, best_reps: 12 }),
+      8,
+      12,
+      'external_weight',
+    )
     expect(t.kind).toBe('add_load')
     expect(t.suggestion).toBe('17.5 kg on set 1')
     expect(t.loadKg).toBe(17.5)
-    expect(t.basis).toContain('10 reps or more')
+    expect(t.basis).toContain('12 reps or more on both')
   })
 
-  it('treats a lone light set the same way — 12 reps is not a working set', () => {
-    const t = suggestTarget(h({ last_weight_kg: 10, last_reps: 12 }), 8, 12, 'external_weight')
-    expect(t.loadKg).toBe(12.5)
-    expect(t.suggestion).toBe('12.5 kg on set 1')
+  it('does not jump past a heavier PR that is still under 12', () => {
+    const t = suggestTarget(
+      h({ last_weight_kg: 15, last_reps: 12, best_weight_kg: 20, best_reps: 8 }),
+      8,
+      12,
+      'external_weight',
+    )
+    expect(t.kind).toBe('hold')
+    expect(t.loadKg).toBe(20)
+    expect(t.suggestion).toBe('20 kg on set 1')
+  })
+
+  it('comes back to the PR after a lighter last session', () => {
+    const t = suggestTarget(
+      h({ last_weight_kg: 15, last_reps: 8, best_weight_kg: 20, best_reps: 12 }),
+      8,
+      12,
+      'external_weight',
+    )
+    expect(t.kind).toBe('hold')
+    expect(t.loadKg).toBe(20)
   })
 
   it('does not let the plan range talk it into adding a rep', () => {
