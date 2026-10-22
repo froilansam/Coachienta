@@ -35,6 +35,12 @@ export const MODELS = {
    * `content`. No Gemini fallback: that pool is the 20 calls a day photo logging uses.
    */
   review: { provider: 'groq', id: 'openai/gpt-oss-120b' },
+  /**
+   * Pasted text → foods. Same model as a session read: `llama-3.3-70b-versatile`
+   * 404s here, and Gemini's 20-a-day pool is the photo one. `generateText`, not
+   * `generateObject` — Groq will not honour `json_schema`.
+   */
+  paste: { provider: 'groq', id: 'openai/gpt-oss-120b' },
   cheap: { provider: 'groq', id: 'llama-3.1-8b-instant' },
   vision: { provider: 'google', id: 'gemini-3.6-flash' },
   /**

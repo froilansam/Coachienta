@@ -14,7 +14,7 @@ import type { Macros, MacroRate } from '@/lib/schemas/domain'
 import type { FoodRow } from '@/lib/schemas/food'
 
 /**
- * Capture → classify → review. Owns the whole photo pipeline.
+ * Capture or paste → classify → review. Owns both ways in.
  *
  * It deliberately stops at "reviewed": committing is `useLogDraft`'s job, so
  * there is one commit path in the app and photo entries land in the same offline
@@ -56,6 +56,10 @@ export interface PhotoDraft {
    * label is a transcription the user confirms. Different screens, one shutter.
    */
   kind: PhotoKind
+  /** Which capture produced the current reading. Drives the review copy. */
+  source: 'photo' | 'text' | null
+  /** The note waiting to be sorted. Kept across a failure so it can be edited. */
+  text: string
   previewUrl: string | null
   dishName: string | null
   items: ReviewItem[]
@@ -66,6 +70,8 @@ export interface PhotoDraft {
   unmatchedCount: number
 
   capture: (file: File) => Promise<void>
+  setText: (text: string) => void
+  submitText: () => Promise<void>
   setAmount: (key: string, amount: number | null) => void
   toggle: (key: string) => void
   remove: (key: string) => void
@@ -87,7 +93,7 @@ const round1 = (n: number) => Math.round(n * 10) / 10
 function withMacros(item: ReviewItem): ReviewItem {
   if (!item.food) return { ...item, macros: null }
   try {
-    return { ...item, macros: scaleMacros(item.food, item.amount, item.food.basis_unit) }
+    return { ...item, macros: scaleMacros(item.food, item.amount, item.unit) }
   } catch {
     // Unit mismatch (a per-piece food matched to a gram estimate). We refuse to
     // guess a density, so the user sets the amount in the food's own unit.
@@ -120,10 +126,33 @@ const BLANK: Reading = { kind: 'neither', dishName: null, items: [], label: null
 
 export function usePhotoDraft(): PhotoDraft {
   const [phase, setPhase] = useState<PhotoPhase>('idle')
+  const [source, setSource] = useState<'photo' | 'text' | null>(null)
+  const [text, setText] = useState('')
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [read, setRead] = useState<Reading>(BLANK)
 
+  const applyReading = useCallback((data: ResolvePhotoResponse) => {
+    setRead({
+      kind: data.kind,
+      dishName: data.dishName,
+      notice: data.notice ?? null,
+      items: data.items.map((i) => withMacros({ ...i, macros: null, included: true })),
+      label: data.label
+        ? {
+            reading: data.label,
+            name: data.label.proposedName,
+            brand: data.label.proposedBrand ?? '',
+            // One basis is the honest default: the label describes 100 g or one
+            // serving, and it cannot know how much of it you ate.
+            amount: data.label.rate.basis_amount,
+          }
+        : null,
+    })
+    setPhase(data.items.length === 0 && !data.label ? 'error' : 'review')
+  }, [])
+
   const capture = useCallback(async (file: File) => {
+    setSource('photo')
     setRead(BLANK)
     setPhase('preparing')
     try {
@@ -137,30 +166,33 @@ export function usePhotoDraft(): PhotoDraft {
         body: JSON.stringify({ image: prepared.base64, mimeType: prepared.mimeType }),
       })
       if (!res.ok) throw new Error(`${res.status}`)
-
-      const data = (await res.json()) as ResolvePhotoResponse
-      setRead({
-        kind: data.kind,
-        dishName: data.dishName,
-        notice: data.notice ?? null,
-        items: data.items.map((i) => withMacros({ ...i, macros: null, included: true })),
-        label: data.label
-          ? {
-              reading: data.label,
-              name: data.label.proposedName,
-              brand: data.label.proposedBrand ?? '',
-              // One basis is the honest default: the label describes 100 g or one
-              // serving, and it cannot know how much of it you ate.
-              amount: data.label.rate.basis_amount,
-            }
-          : null,
-      })
-      setPhase(data.items.length === 0 && !data.label ? 'error' : 'review')
+      applyReading((await res.json()) as ResolvePhotoResponse)
     } catch {
       setRead({ ...BLANK, notice: 'Could not read that photo. Type the food instead.' })
       setPhase('error')
     }
-  }, [])
+  }, [applyReading])
+
+  const submitText = useCallback(async () => {
+    const note = text.trim()
+    if (note === '') return
+    setSource('text')
+    setPreviewUrl(null)
+    setRead(BLANK)
+    setPhase('identifying')
+    try {
+      const res = await fetch('/api/data/resolve-paste', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: note }),
+      })
+      if (!res.ok) throw new Error(`${res.status}`)
+      applyReading((await res.json()) as ResolvePhotoResponse)
+    } catch {
+      setRead({ ...BLANK, notice: 'Could not sort that text. Type the foods instead.' })
+      setPhase('error')
+    }
+  }, [applyReading, text])
 
   /** Every plate mutation touches only `items`, so they share one updater. */
   const mapItems = useCallback((fn: (items: ReviewItem[]) => ReviewItem[]) => {
@@ -236,6 +268,8 @@ export function usePhotoDraft(): PhotoDraft {
 
   const reset = useCallback(() => {
     setPhase('idle')
+    setSource(null)
+    setText('')
     setPreviewUrl(null)
     setRead(BLANK)
   }, [])
@@ -271,6 +305,8 @@ export function usePhotoDraft(): PhotoDraft {
   return {
     phase,
     kind: read.kind,
+    source,
+    text,
     previewUrl,
     dishName: read.dishName,
     items: read.items,
@@ -279,6 +315,8 @@ export function usePhotoDraft(): PhotoDraft {
     notice: read.notice,
     unmatchedCount: read.items.filter((i) => i.included && !i.food).length,
     capture,
+    setText,
+    submitText,
     setAmount,
     toggle,
     remove,

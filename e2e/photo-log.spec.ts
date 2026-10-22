@@ -177,6 +177,57 @@ test('excluded items leave the basket, and confirming commits exactly what is sh
   expect(Number(rows[0]?.amount)).toBe(200)
 })
 
+test.describe('pasted text', () => {
+  // A stubbed route is invisible once the service worker controls the page.
+  test.use({ serviceWorkers: 'block' })
+
+  test('pasted text becomes candidates and writes nothing on its own', async ({ page }) => {
+    const before = await countEntries()
+    await page.route('**/api/data/resolve-paste', (route) =>
+      route.fulfill({
+        json: {
+          kind: 'plate',
+          dishName: 'Breakfast',
+          label: null,
+          sceneNotes: null,
+          degraded: false,
+          items: [
+            {
+              key: 'egg',
+              name: 'Egg',
+              amount: 2,
+              unit: 'piece',
+              reasoning: 'written as 2 eggs',
+              visionConfidence: 'high',
+              food: null,
+            },
+            {
+              key: 'rice',
+              name: 'White rice (cooked)',
+              amount: 200,
+              unit: 'g',
+              reasoning: 'written as 200g',
+              visionConfidence: 'high',
+              food: null,
+            },
+          ],
+        },
+      }),
+    )
+
+    await page.goto(`/?k=${TOKEN}`)
+    await page.getByRole('button', { name: 'LOG FOOD' }).click()
+    await page.getByLabel('Paste food').fill('2 eggs, 200g rice')
+    await page.getByRole('button', { name: 'SORT' }).click()
+
+    await expect(page.getByRole('button', { name: /Names were taken from the text you pasted/ })).toBeVisible()
+    await expect(page.getByText('written as 2 eggs')).toBeVisible()
+    await expect(page.getByText('written as 200g')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'ADD 0 ITEMS' })).toBeVisible()
+    expect(await countEntries()).toBe(before)
+  })
+})
+
 test('a vision failure never blocks typing (AC-1.12)', async ({ page }) => {
   let hit = false
   await page.route('**/api/data/resolve-photo', (route) => {

@@ -25,6 +25,7 @@ export function PhotoReview({
   items,
   total,
   unmatchedCount,
+  explain = 'Names were read from your photo. Amounts are estimates — check the grams before logging.',
   onAmountChange,
   onToggle,
   onRemove,
@@ -34,34 +35,35 @@ export function PhotoReview({
   items: readonly ReviewItem[]
   total: Macros
   unmatchedCount: number
+  /** Why these rows exist. A pasted note is not a photo, and the copy has to say so. */
+  explain?: string
   onAmountChange: (key: string, amount: number | null) => void
   onToggle: (key: string) => void
   onRemove: (key: string) => void
 }) {
   return (
     <div className="flex flex-col gap-4 pb-2">
-      <div className="flex items-center gap-3">
-        {previewUrl ? (
-          // The photo stays on screen while you correct amounts — you are
-          // comparing the numbers against it, not remembering it.
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={previewUrl}
-            alt="The food you photographed"
-            className="size-16 shrink-0 rounded-md object-cover"
-          />
-        ) : null}
-        {dishName ? (
-          <Text as="h3" variant="body">
-            {dishName}
-          </Text>
-        ) : null}
-      </div>
+      {previewUrl || dishName ? (
+        <div className="flex items-center gap-3">
+          {previewUrl ? (
+            // The photo stays on screen while you correct amounts — you are
+            // comparing the numbers against it, not remembering it.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={previewUrl}
+              alt="The food you photographed"
+              className="size-16 shrink-0 rounded-md object-cover"
+            />
+          ) : null}
+          {dishName ? (
+            <Text as="h3" variant="body">
+              {dishName}
+            </Text>
+          ) : null}
+        </div>
+      ) : null}
 
-      <ProvenanceHeader
-        label="AI-DETECTED ITEMS"
-        explain="Names were read from your photo. Amounts are estimates — check the grams before logging."
-      />
+      <ProvenanceHeader label="AI-DETECTED ITEMS" explain={explain} />
 
       <div className="flex flex-col">
         {items.map((item) => (
@@ -77,6 +79,9 @@ export function PhotoReview({
                 <Text variant="body" truncate>
                   {item.name}
                 </Text>
+                {item.food && item.food.name !== item.name ? (
+                  <Text variant="micro">{item.food.name}</Text>
+                ) : null}
                 {/* Why the model thought this size — you cannot correct an
                     estimate you cannot see the basis for. */}
                 <Text variant="micro">{item.reasoning}</Text>

@@ -1,5 +1,6 @@
 'use client'
 import { Button } from '@/components/ui/Button'
+import { Field, Textarea } from '@/components/ui/Field'
 import { Chip } from '@/components/ui/Chip'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Rule } from '@/components/ui/Rule'
@@ -16,7 +17,7 @@ import { NewFoodSheet } from './NewFoodSheet'
 import { PhotoCaptureButton } from './PhotoCaptureButton'
 
 /**
- * The ways in: type it, shoot it, or upload it. All land on the same result rows.
+ * The ways in: type it, shoot it, upload it, or paste it. All land on the same result rows.
  *
  * Takes the hooks whole rather than 15 props — they are already the tested,
  * typed surface, and spreading them here would only hide where state lives.
@@ -33,6 +34,7 @@ export function FoodSearchPanel({
   onSelect: (food: FoodRow) => void
 }) {
   const busy = photo.phase === 'preparing' || photo.phase === 'identifying'
+  const sortingText = busy && photo.source === 'text'
   const newFood = useNewFood()
 
   /**
@@ -59,10 +61,33 @@ export function FoodSearchPanel({
           placeholder="e.g. 200g white rice"
           autoFocus
         />
-        <PhotoCaptureButton onFile={photo.capture} loading={busy} />
+        <PhotoCaptureButton
+          onFile={photo.capture}
+          loading={busy && !sortingText}
+          disabled={sortingText}
+        />
+        <Field label="Paste food" hint="A meal, a list, or a copied nutrition label.">
+          <Textarea
+            value={photo.text}
+            onChange={(e) => photo.setText(e.target.value)}
+            placeholder="2 eggs, 200g rice, black coffee"
+            disabled={busy}
+          />
+        </Field>
+        <Button
+          variant="secondary"
+          fullWidth
+          disabled={photo.text.trim() === '' || busy}
+          loading={sortingText}
+          onClick={() => void photo.submitText()}
+        >
+          SORT
+        </Button>
       </div>
 
-      {photo.phase === 'identifying' ? <Chip label="Reading your photo…" tone="accent" /> : null}
+      {photo.phase === 'identifying' ? (
+        <Chip label={sortingText ? 'Sorting that text…' : 'Reading your photo…'} tone="accent" />
+      ) : null}
       {photo.phase === 'error' && photo.notice ? <Chip label={photo.notice} tone="warn" /> : null}
 
       {/*

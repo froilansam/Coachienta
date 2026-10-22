@@ -148,6 +148,11 @@ export function LogFoodSheet({
           items={photo.items}
           total={photo.total}
           unmatchedCount={photo.unmatchedCount}
+          explain={
+            photo.source === 'text'
+              ? 'Names were taken from the text you pasted. Amounts are what was written, or one serving where none was. Check them before logging.'
+              : undefined
+          }
           onAmountChange={photo.setAmount}
           onToggle={photo.toggle}
           onRemove={photo.remove}

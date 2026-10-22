@@ -60,6 +60,21 @@ const PhotoReading = z.object({
 
 export type PhotoCandidate = z.infer<typeof PlateItem>
 
+/**
+ * Shared with pasted text. A copied panel and a photographed panel are the same
+ * transcription job, and the 糖質 rule cannot live in two prompts.
+ */
+export const LABEL_TRANSCRIPTION = `FOR A LABEL, TRANSCRIBE. Do not calculate anything.
+- Copy digits exactly as printed. Never convert, sum, scale or infer a missing value.
+- One entry in "columns" per column the panel prints. Many labels print two (per 100 g and per serving); capture both — they cross-check each other.
+- basis_unit / basis_amount is what the column is per: 100 g → g/100. "1食分" or "1袋" → serving/1 or piece/1.
+- basis_mass is the weight the label states for that basis: "1食分 (40g)" → 40. Leave null if no weight is printed. Never estimate it.
+- Japanese panels: 熱量=kcal, たんぱく質=protein, 脂質=fat, 炭水化物=carbohydrate_g, 糖質=net_carbs_g, 食物繊維=fiber_g, 糖類=sugars_g, 食塩相当量=salt_g, ナトリウム=sodium_mg.
+- 糖質 is NOT sugars and NOT total carbohydrate. Put it in net_carbs_g. If the panel prints 糖質 and 食物繊維 but no 炭水化物 line, leave carbohydrate_g null.
+- Set regime "jp" for a Japanese panel, "us" for a US Nutrition Facts panel, else "unknown".
+- Any value not printed is null. A null is correct; a guess is not.
+- Put anything you could not read into unreadable_notes.`
+
 const SYSTEM = `You read one photo for a food log. It is either a plate of food or a printed nutrition panel.
 
 Decide which:
@@ -73,16 +88,7 @@ FOR A PLATE, estimate:
 - Say what in the image told you the size — a plate rim, a spoon, a standard bowl.
 - If you cannot see food, return kind "neither". Do not invent food.
 
-FOR A LABEL, TRANSCRIBE. Do not calculate anything.
-- Copy digits exactly as printed. Never convert, sum, scale or infer a missing value.
-- One entry in "columns" per column the panel prints. Many labels print two (per 100 g and per serving); capture both — they cross-check each other.
-- basis_unit / basis_amount is what the column is per: 100 g → g/100. "1食分" or "1袋" → serving/1 or piece/1.
-- basis_mass is the weight the label states for that basis: "1食分 (40g)" → 40. Leave null if no weight is printed. Never estimate it.
-- Japanese panels: 熱量=kcal, たんぱく質=protein, 脂質=fat, 炭水化物=carbohydrate_g, 糖質=net_carbs_g, 食物繊維=fiber_g, 糖類=sugars_g, 食塩相当量=salt_g, ナトリウム=sodium_mg.
-- 糖質 is NOT sugars and NOT total carbohydrate. Put it in net_carbs_g. If the panel prints 糖質 and 食物繊維 but no 炭水化物 line, leave carbohydrate_g null.
-- Set regime "jp" for a Japanese panel, "us" for a US Nutrition Facts panel, else "unknown".
-- Any value not printed is null. A null is correct; a guess is not.
-- Put anything you could not read into unreadable_notes.`
+${LABEL_TRANSCRIPTION}`
 
 export type PhotoKind = 'plate' | 'label' | 'neither'
 

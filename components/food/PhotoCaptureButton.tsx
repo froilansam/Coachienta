@@ -14,9 +14,11 @@ import { Button } from '@/components/ui/Button'
 export function PhotoCaptureButton({
   onFile,
   loading,
+  disabled,
 }: {
   onFile: (file: File) => void
   loading?: boolean
+  disabled?: boolean
 }) {
   const camera = useRef<HTMLInputElement>(null)
   const library = useRef<HTMLInputElement>(null)
@@ -52,6 +54,7 @@ export function PhotoCaptureButton({
           variant="secondary"
           iconStart={Camera}
           loading={loading}
+          disabled={disabled}
           onClick={() => camera.current?.click()}
         >
           PHOTO
@@ -60,6 +63,7 @@ export function PhotoCaptureButton({
           variant="secondary"
           iconStart={ImageUp}
           loading={loading}
+          disabled={disabled}
           onClick={() => library.current?.click()}
         >
           UPLOAD

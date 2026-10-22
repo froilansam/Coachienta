@@ -4,6 +4,7 @@ import {
   type InputHTMLAttributes,
   type ReactElement,
   type ReactNode,
+  type TextareaHTMLAttributes,
   cloneElement,
 } from 'react'
 import { cn } from '@/lib/cn'
@@ -94,6 +95,22 @@ export function Input({ size = 'md', className, ...rest }: InputProps) {
     <input
       {...rest}
       className={cn(base, 'border-rule', size === 'lg' ? 'h-13' : 'h-11', className)}
+    />
+  )
+}
+
+export interface TextareaProps
+  extends Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'className'> {
+  className?: string
+}
+
+/** Same floor as `Input`: 16px, or iOS Safari zooms the page in on focus. */
+export function Textarea({ className, rows = 4, ...rest }: TextareaProps) {
+  return (
+    <textarea
+      {...rest}
+      rows={rows}
+      className={cn(base, 'border-rule py-2 leading-normal', className)}
     />
   )
 }
