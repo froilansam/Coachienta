@@ -220,33 +220,57 @@ export interface FoodWeeklyAverage {
   proteinG: number
 }
 
+/** The finished weeks a food average is allowed to use. The current week is excluded. */
+export function finishedWeekBounds(
+  today: string,
+  rangeDays: number,
+): { from: string; until: string; lastWeekStart: string } {
+  const from = mondayOf(addDays(today, -rangeDays + 1))
+  const lastWeekStart = addDays(mondayOf(today), -7)
+  const until = addDays(lastWeekStart, 6)
+  return { from, until, lastWeekStart }
+}
+
+/**
+ * Logged days inside finished weeks, plus the week count those days span.
+ * Blank weeks between the first logged week and the last finished week still count.
+ * Returns null when there is no finished week to average.
+ */
+export function finishedFoodWindow(
+  buckets: readonly DayBucket[],
+  today: string,
+  rangeDays: number,
+): { logged: DayBucket[]; from: string; until: string; weeks: number } | null {
+  const { from, until, lastWeekStart } = finishedWeekBounds(today, rangeDays)
+  const logged = buckets.filter(
+    (b) => b.entry_count > 0 && b.bucket >= from && b.bucket <= until,
+  )
+  if (logged.length === 0) return null
+
+  const earliest = logged.reduce((m, b) => (b.bucket < m ? b.bucket : m), until)
+  const start = mondayOf(earliest)
+  let weeks = 0
+  for (let w = start; w <= lastWeekStart; w = addDays(w, 7)) weeks += 1
+  if (weeks === 0) return null
+  return { logged, from: start, until, weeks }
+}
+
 export function foodWeeklyAverage(
   buckets: readonly DayBucket[],
   today: string,
   rangeDays: number,
 ): FoodWeeklyAverage {
   const none: FoodWeeklyAverage = { weeks: 0, daysLogged: 0, kcal: 0, proteinG: 0 }
-  const from = mondayOf(addDays(today, -rangeDays + 1))
-  const lastWeekStart = addDays(mondayOf(today), -7)
-  const until = addDays(lastWeekStart, 6)
+  const window = finishedFoodWindow(buckets, today, rangeDays)
+  if (!window) return none
 
-  const logged = buckets.filter(
-    (b) => b.entry_count > 0 && b.bucket >= from && b.bucket <= until,
-  )
-  if (logged.length === 0) return none
-
-  const earliest = logged.reduce((m, b) => (b.bucket < m ? b.bucket : m), until)
-  let weeks = 0
-  for (let w = mondayOf(earliest); w <= lastWeekStart; w = addDays(w, 7)) weeks += 1
-  if (weeks === 0) return none
-
-  const kcal = logged.reduce((n, b) => n + b.kcal, 0)
-  const protein = logged.reduce((n, b) => n + b.protein_g, 0)
+  const kcal = window.logged.reduce((n, b) => n + b.kcal, 0)
+  const protein = window.logged.reduce((n, b) => n + b.protein_g, 0)
   return {
-    weeks,
-    daysLogged: Math.round((logged.length / weeks) * 10) / 10,
-    kcal: Math.round(kcal / logged.length),
-    proteinG: Math.round(protein / logged.length),
+    weeks: window.weeks,
+    daysLogged: Math.round((window.logged.length / window.weeks) * 10) / 10,
+    kcal: Math.round(kcal / window.logged.length),
+    proteinG: Math.round(protein / window.logged.length),
   }
 }
 

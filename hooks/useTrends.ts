@@ -11,6 +11,7 @@ import type { GridRow } from '@/components/patterns/WeekGrid'
 import { labelOf } from '@/lib/domain/coach/priorities'
 import { todayLocal } from '@/lib/domain/date'
 import type { Metric } from '@/components/patterns/MetricStrip'
+import { foodReport, type ReportLine } from '@/lib/domain/food/report'
 import {
   foodCalendar,
   foodWeeklyAverage,
@@ -116,6 +117,7 @@ export interface TrendsView {
   /** `DAYS LOGGED 5.4  KCAL 2,140  PROTEIN 148 g` — a normal week, averaged. */
   foodWeeklyMetrics: Metric[]
   foodWeeklyNote: string
+  reportLines: ReportLine[]
 }
 
 const WEEKDAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
@@ -262,6 +264,20 @@ export function useTrends(): TrendsView {
       { label: 'PROTEIN', value: foodWeek.proteinG, unit: 'g' },
     ],
     [foodWeek],
+  )
+  const reportLines = useMemo(
+    () =>
+      foodReport({
+        today,
+        rangeDays: Number(range),
+        days: nutritionDays,
+        sessions,
+        weights: data?.nutrition.weights ?? [],
+        profile: data?.nutrition.profile ?? { birthDate: null, heightCm: null, sex: null },
+        phase: data?.nutrition.phase ?? null,
+        targets: data?.nutrition.targets ?? null,
+      }),
+    [today, range, nutritionDays, sessions, data],
   )
 
   // -- frequency ------------------------------------------------------------
@@ -463,6 +479,7 @@ export function useTrends(): TrendsView {
       foodWeek.weeks,
       'Calories and protein are per LOGGED day — an unlogged day is missing data, not a day of eating nothing.',
     ),
+    reportLines,
   }
 }
 

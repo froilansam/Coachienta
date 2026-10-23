@@ -15,6 +15,7 @@ import { SkeletonList } from '@/components/ui/Skeleton'
 import { Text } from '@/components/ui/Text'
 import { useTrends, type Measure, type Range, type TrendsDomain } from '@/hooks/useTrends'
 import { AdherencePanel } from './AdherencePanel'
+import { FoodReport } from './FoodReport'
 
 /**
  * Trends — food intake and training, one screen, one range control.
@@ -105,6 +106,8 @@ function FoodPanels({ vm }: { vm: ReturnType<typeof useTrends> }) {
 
   return (
     <>
+      <FoodReport lines={vm.reportLines} />
+
       <Text variant="micro">{vm.averagesCaption}</Text>
 
       <Panel title="Weekly average" caption={vm.foodWeeklyNote}>

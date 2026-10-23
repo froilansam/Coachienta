@@ -7,6 +7,7 @@ import {
   type NutritionBucket,
 } from '@/lib/db/queries/coach'
 import { addDays, todayLocal } from '@/lib/domain/date'
+import type { ReportPhase, ReportProfile, ReportTargets, ReportWeight } from '@/lib/domain/food/report'
 import type { ConfidenceCounts } from '@/lib/domain/food/trends'
 
 /**
@@ -127,6 +128,10 @@ export interface NutritionTrends {
   confidence: ConfidenceCounts
   start: string
   end: string
+  profile: ReportProfile
+  weights: ReportWeight[]
+  phase: ReportPhase | null
+  targets: ReportTargets | null
 }
 
 /** Entry counts by confidence for the data-quality strip. */
@@ -145,13 +150,71 @@ async function confidenceCounts(start: string, end: string): Promise<ConfidenceC
   return counts
 }
 
+const iso = (v: unknown): string => String(v).slice(0, 10)
+
+const nullable = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v))
+
+/** Profile, weigh-ins, and the open program — what the food report scores against. */
+async function reportContext(): Promise<
+  Pick<NutritionTrends, 'profile' | 'weights' | 'phase' | 'targets'>
+> {
+  const [prof, meas, phase, targets] = await Promise.all([
+    db.from('profile').select('birth_date, height_cm, sex').eq('id', true).maybeSingle(),
+    db
+      .from('body_measurements')
+      .select('measured_on, weight_kg')
+      .not('weight_kg', 'is', null)
+      .order('measured_on', { ascending: true }),
+    db
+      .from('training_phases')
+      .select('label, target_rate_kg_per_week')
+      .is('effective_to', null)
+      .maybeSingle(),
+    db
+      .from('nutrition_targets')
+      .select('phase_label, protein_g, kcal_gym_low, kcal_gym_high, kcal_rest_low, kcal_rest_high')
+      .is('effective_to', null)
+      .maybeSingle(),
+  ])
+  for (const r of [prof, meas, phase, targets]) {
+    if (r.error) throw new Error(r.error.message)
+  }
+
+  const sex = prof.data?.sex === 'male' || prof.data?.sex === 'female' ? prof.data.sex : null
+  return {
+    profile: {
+      birthDate: prof.data?.birth_date ? iso(prof.data.birth_date) : null,
+      heightCm: nullable(prof.data?.height_cm),
+      sex,
+    },
+    weights: (meas.data ?? []).map((r) => ({
+      measured_on: iso(r.measured_on),
+      weight_kg: Number(r.weight_kg),
+    })),
+    phase: phase.data
+      ? { label: phase.data.label, rateKgPerWeek: nullable(phase.data.target_rate_kg_per_week) }
+      : null,
+    targets: targets.data
+      ? {
+          phaseLabel: targets.data.phase_label,
+          proteinG: Number(targets.data.protein_g),
+          kcalGymLow: nullable(targets.data.kcal_gym_low),
+          kcalGymHigh: nullable(targets.data.kcal_gym_high),
+          kcalRestLow: nullable(targets.data.kcal_rest_low),
+          kcalRestHigh: nullable(targets.data.kcal_rest_high),
+        }
+      : null,
+  }
+}
+
 export async function nutritionTrends(days = 84): Promise<NutritionTrends> {
   const end = todayLocal()
   const start = addDays(end, -(Number.isFinite(days) ? days : 84) + 1)
-  const [summary, averages, confidence] = await Promise.all([
+  const [summary, averages, confidence, context] = await Promise.all([
     nutritionSummary(start, end, 'day'),
     nutritionAverages(start, end),
     confidenceCounts(start, end),
+    reportContext(),
   ])
   return {
     days: summary.buckets,
@@ -159,5 +222,6 @@ export async function nutritionTrends(days = 84): Promise<NutritionTrends> {
     confidence,
     start,
     end,
+    ...context,
   }
 }
